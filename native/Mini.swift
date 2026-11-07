@@ -14,7 +14,7 @@ enum MiniCorner: String, CaseIterable {
 }
 
 enum MiniLayout {
-    static let valueSize = NSSize(width: 320, height: 184)
+    static let valueSize = NSSize(width: 320, height: 228)
     static let symbolSize = NSSize(width: 110, height: 148)
     static func opacity(_ value: Double) -> Double { value.isFinite ? min(1, max(0.3, value)) : 1 }
     static func size(symbols: Bool) -> NSSize { symbols ? symbolSize : valueSize }
@@ -172,13 +172,11 @@ struct MiniView: View {
                 if model.miniSymbols { Image(systemName: "arrow.triangle.2.circlepath").font(.system(size: 8)).help("Updating…") }
                 else { Text("Updating…") }
             }
-            if model.miniSymbols {
-                Slider(value: $model.miniOpacity, in: 0.3...1, step: 0.05)
-                    .labelsHidden().controlSize(.mini).tint(model.accent).frame(width: 36)
-                    .accessibilityLabel("Window opacity")
-                    .accessibilityValue("\(Int((model.miniOpacity * 100).rounded())) percent")
-                    .help("Window opacity: \(Int((model.miniOpacity * 100).rounded()))%")
-            }
+            Slider(value: $model.miniOpacity, in: 0.3...1, step: 0.05)
+                .labelsHidden().controlSize(.mini).tint(model.accent).frame(width: model.miniSymbols ? 36 : 60)
+                .accessibilityLabel("Window opacity")
+                .accessibilityValue("\(Int((model.miniOpacity * 100).rounded())) percent")
+                .help("Window opacity: \(Int((model.miniOpacity * 100).rounded()))%")
         }.font(.system(size: 10)).foregroundStyle(FlightDeck.muted).frame(height: 14)
     }
     private func symbolTitle(_ quota: Quota) -> String {
@@ -215,10 +213,15 @@ struct MiniView: View {
         let age = time - quota.observedAt
         let stale = age > Double(max(model.interval * 3, 600))
         return VStack(alignment: .leading, spacing: 7) {
-            HStack(alignment: .firstTextBaseline, spacing: 14) {
-                metric("Remaining", value: Formats.percent(quota.remaining), size: 30, color: model.accent)
-                metric("Linear baseline", value: quota.isIdle ? "—" : String(format: "%.*f%%", GaugeScale.precision(model.displayStep), quota.baseline(time)), size: 21, color: FlightDeck.ink)
-            }.frame(height: 50)
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 6) {
+                    metric("Remaining", value: Formats.percent(quota.remaining), size: 28, color: model.accent)
+                    metric("Linear baseline", value: quota.isIdle ? "—" : String(format: "%.*f%%", GaugeScale.precision(model.displayStep), quota.baseline(time)), size: 19, color: FlightDeck.ink)
+                }
+                Rectangle().fill(.white.opacity(0.09)).frame(width: 1, height: 84)
+                // Both mini modes share the same scale, warning, drag, and wheel controls.
+                symbols(quota, now: now).frame(width: 94)
+            }.frame(height: 94)
             Rectangle().fill(.white.opacity(0.09)).frame(height: 1)
             HStack {
                 Text(quota.isIdle ? "Reset" : "Resets in").foregroundStyle(FlightDeck.muted)

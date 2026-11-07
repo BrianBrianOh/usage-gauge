@@ -4,7 +4,7 @@
 
 Usage Gauge brings the visual language of aircraft instruments to Codex and Claude on macOS: a glideslope-inspired deviation display, detented rotary selectors, thin reference marks, and compact readouts. Keep it in a corner of your screen and see whether your remaining quota is above or below a linear budget through the next reset.
 
-The cockpit influence is in the interaction, too. Your diamond stays fixed while the reference moves; the wheel changes scale one detent at a time; a direct red/service-color warning marks the upper limit. Open the full panel for history and forecasts, shrink to numbers, or strip it down to symbols.
+The cockpit influence is in the interaction, too. Your diamond stays fixed while the reference moves; the wheel changes scale one detent at a time; a direct red/service-color warning marks the upper limit. Open the full panel for history and forecasts, keep numbers beside the instrument in mini mode, or strip it down to symbols.
 
 ![Codex and Claude in Usage Gauge: session time scale, weekly time scale, and percentage-point mode](docs/demo.gif)
 
@@ -18,11 +18,11 @@ The cockpit influence is in the interaction, too. Your diamond stays fixed while
 | --- | --- |
 | ![Codex full window: remaining quota, history graph, reset countdown, and rotary selectors](docs/full-codex.png) | ![Claude full window: weekly quota, forecast, usage breakdown, and rotary selectors](docs/full-claude.png) |
 
-**Numeric mini · 320 × 184 points.** Remaining quota, linear baseline, and time to reset in a small window you can keep on top.
+**Numeric mini · 320 × 228 points.** Exact remaining quota and linear baseline on the left, the symbol instrument on the right, and reset time below. Read the numbers and your pace together in a small window you can keep on top. The instrument keeps the same wheel/click scale selection, drag behavior, and warning as symbols-only mode; its unit and spacing stay in sync when switching modes. The opacity slider sits beside the limit selector.
 
 | Codex | Claude |
 | --- | --- |
-| ![Codex numeric mini window with remaining quota, linear baseline, and reset time](docs/mini-codex.png) | ![Claude numeric mini window with weekly quota, linear baseline, and reset time](docs/mini-claude.png) |
+| ![Codex numeric mini window with numbers beside the symbol instrument and reset time below](docs/mini-codex.png) | ![Claude numeric mini window with weekly numbers beside the symbol instrument and reset time below](docs/mini-claude.png) |
 
 *These stills render the actual app views with synthetic fixtures, including the native rotary controls. No account is connected or read during generation.*
 
@@ -63,7 +63,7 @@ The center is **your current state**, not 50% remaining. The two thin vertical b
 - With macOS Reduce Motion enabled, the warning is steady red. An unavailable or stale observation pauses the warning and shows a status icon.
 - The symbol window is **110 × 148 points**. Choose the service at the top; the `…` menu contains pinning, values, full window, refresh, and corner placement.
 
-The full window adds history, a consumption forecast when enough observations exist, and rotary selectors for time range and display interval. The numeric mini window shows remaining quota, baseline, and reset time.
+The full window adds history, a consumption forecast when enough observations exist, and rotary selectors for time range and display interval. The numeric mini window pairs remaining quota and baseline numbers with the symbol instrument, with reset time below.
 
 | Scale | Default | Wheel choices | Range at default |
 | --- | --- | --- | --- |

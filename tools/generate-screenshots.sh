@@ -8,4 +8,4 @@ swiftc -swift-version 5 -parse-as-library -O -DDEMO_RENDER -DSCREENSHOT_RENDER \
   "$TASK_DIR/native/Rotary.swift" "$TASK_DIR/native/Instruments.swift" "$TASK_DIR/native/Mini.swift" \
   "$TASK_DIR/tools/Screenshots.swift" -o "$TASK_DIR/dist/generate-screenshots" \
   -framework AppKit -framework SwiftUI -framework Charts -framework WebKit -framework ImageIO
-"$TASK_DIR/dist/generate-screenshots" "$TASK_DIR/docs"
+"$TASK_DIR/dist/generate-screenshots" "$TASK_DIR/docs" "$@"

@@ -86,8 +86,11 @@ private final class ScreenshotWindow: NSWindow {
             let model = ScreenshotModel()
             model.provider = provider
             model.selectedID = provider == "codex" ? "codex:primary" : "claude:seven_day"
-            try render(GaugeView(model: model), size: NSSize(width: 560, height: 780),
-                       output: output.appendingPathComponent("full-\(provider).png"))
+            model.miniDotIndex = DotScale.defaultIndex(unit: .time, durationMinutes: model.quota!.durationMinutes)
+            if !CommandLine.arguments.contains("--mini-only") {
+                try render(GaugeView(model: model), size: NSSize(width: 560, height: 780),
+                           output: output.appendingPathComponent("full-\(provider).png"))
+            }
             try render(MiniView(model: model), size: MiniLayout.size(symbols: false),
                        output: output.appendingPathComponent("mini-\(provider).png"))
         }
