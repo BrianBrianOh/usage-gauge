@@ -198,6 +198,27 @@ enum Formats {
     @Published var miniScaleIndex = DotScale.bounded(UserDefaults.standard.object(forKey: "miniScaleIndex") as? Int ?? 1) {
         didSet { UserDefaults.standard.set(miniScaleIndex, forKey: "miniScaleIndex") }
     }
+    @Published var miniDotUnit = DotUnit(rawValue: UserDefaults.standard.string(forKey: "miniDotUnit") ?? "") ?? .time {
+        didSet { UserDefaults.standard.set(miniDotUnit.rawValue, forKey: "miniDotUnit") }
+    }
+    @Published var miniSessionTimeIndex = DotScale.bounded(UserDefaults.standard.object(forKey: "miniSessionTimeIndex") as? Int ?? 0) {
+        didSet { UserDefaults.standard.set(miniSessionTimeIndex, forKey: "miniSessionTimeIndex") }
+    }
+    @Published var miniWeeklyTimeIndex = DotScale.bounded(UserDefaults.standard.object(forKey: "miniWeeklyTimeIndex") as? Int ?? 1) {
+        didSet { UserDefaults.standard.set(miniWeeklyTimeIndex, forKey: "miniWeeklyTimeIndex") }
+    }
+    var miniDotIndex: Int {
+        get {
+            if miniDotUnit == .percentagePoints { return miniScaleIndex }
+            return DotScale.isLongWindow(quota?.durationMinutes ?? 300) ? miniWeeklyTimeIndex : miniSessionTimeIndex
+        }
+        set {
+            if miniDotUnit == .percentagePoints { miniScaleIndex = DotScale.bounded(newValue) }
+            else if DotScale.isLongWindow(quota?.durationMinutes ?? 300) { miniWeeklyTimeIndex = DotScale.bounded(newValue) }
+            else { miniSessionTimeIndex = DotScale.bounded(newValue) }
+        }
+    }
+    var miniDotScale: DotScale { DotScale(unit: miniDotUnit, durationMinutes: quota?.durationMinutes ?? 300, index: miniDotIndex) }
     @Published var miniOpacity = MiniLayout.opacity(UserDefaults.standard.object(forKey: "miniOpacity") as? Double ?? 1) {
         didSet { UserDefaults.standard.set(miniOpacity, forKey: "miniOpacity"); onChange?() }
     }
@@ -799,9 +820,27 @@ struct GaugeView: View {
                 precondition(UsageDeviation(remaining: 30, baseline: 30 + 2 * spacing, pointsPerDot: spacing).warning)
             }
             precondition(DotScale.points(-1) == 1 && DotScale.points(3) == 5)
+            let sessionScale = DotScale(unit: .time, durationMinutes: 300, index: DotScale.defaultIndex(unit: .time, durationMinutes: 300))
+            let weeklyScale = DotScale(unit: .time, durationMinutes: 10080, index: DotScale.defaultIndex(unit: .time, durationMinutes: 10080))
+            precondition(sessionScale.caption == "5m/dot" && sessionScale.options == [5, 10, 15] && sessionScale.limitText == "10 minutes")
+            precondition(weeklyScale.caption == "4h/dot" && weeklyScale.options == [120, 240, 480] && weeklyScale.limitText == "8 hours")
+            for duration in [300.0, 10080.0] {
+                for index in 0...2 {
+                    let scale = DotScale(unit: .time, durationMinutes: duration, index: index)
+                    precondition(abs(scale.pointsPerDot * duration / 100 - scale.options[index]) < 1e-9)
+                    let one = UsageDeviation(remaining: 50, baseline: 50 + scale.pointsPerDot, pointsPerDot: scale.pointsPerDot)
+                    precondition(abs(one.normalized - 0.5) < 1e-9 && !one.warning)
+                    let edge = UsageDeviation(remaining: 50, baseline: 50 + scale.pointsPerDot * 2, pointsPerDot: scale.pointsPerDot)
+                    precondition(edge.warning && !edge.outsideScale)
+                    precondition(!UsageDeviation(remaining: 50, baseline: 50 + scale.pointsPerDot * 2 - 0.001, pointsPerDot: scale.pointsPerDot).warning)
+                    let reserve = UsageDeviation(remaining: 50 + scale.pointsPerDot, baseline: 50, pointsPerDot: scale.pointsPerDot)
+                    precondition(abs(reserve.normalized + 0.5) < 1e-9 && !reserve.warning)
+                }
+            }
+            precondition(DotScale(unit: .percentagePoints, durationMinutes: 10080, index: 1).caption == "2 pp/dot")
             precondition(WarningFlash.isRed(at: 0) && WarningFlash.isRed(at: 0.799))
             precondition(!WarningFlash.isRed(at: 0.8) && !WarningFlash.isRed(at: 1.599) && WarningFlash.isRed(at: 1.6))
-            print("PASS: 1/2/5-pp scales, binary flash timing, deviation direction/clipping/alert threshold/stale suppression, mini placement/countdown, baseline, forecast, missing history, offline snapshot, time bounds, adaptive vertical axis, display precision, Claude cycle jitter, short-window forecast, Claude limits/idle/extras/legacy")
+            print("PASS: session/weekly time defaults and conversion, time alert boundaries, pp scales, binary flash timing, deviation direction/clipping/stale suppression, mini placement/countdown, baseline, forecast, missing history, offline snapshot, time bounds, adaptive vertical axis, display precision, Claude cycle jitter, short-window forecast, Claude limits/idle/extras/legacy")
             return
         }
         let application = NSApplication.shared

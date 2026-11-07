@@ -2,9 +2,23 @@
 
 A small macOS instrument for Codex and Claude subscription usage. Compare your remaining quota with a linear budget through the next reset.
 
-![Usage Gauge: on pace, below baseline, and reserve examples](docs/demo.gif)
+![Usage Gauge: session time scale, weekly time scale, and percentage-point mode](docs/demo.gif)
 
-*The GIF uses synthetic values rendered by the app's instrument components. It contains no account data. Motion is accelerated to make the reference bar visible.*
+*All GIFs are rendered feature demonstrations using synthetic values and the app's instrument components. They contain no account data. Motion is accelerated to make the reference bar visible.*
+
+## Feature demos
+
+**Time and pp scales.** Session minutes, weekly hours, and percentage points each have three wheel-selectable intervals. The selected scale stays visible.
+
+![Changing session, weekly, and percentage-point dot spacing](docs/scales.gif)
+
+**Budget warning.** The center stays fixed while the white reference moves. At the upper limit, the diamond switches directly between red and the service color.
+
+![Moving budget reference and binary warning](docs/warning.gif)
+
+**Dragging and opacity.** Move the compact instrument by dragging the dot area or bottom label. Use the small slider beside the limit name to adjust opacity.
+
+![Rendered demonstration of widget placement and opacity](docs/opacity.gif)
 
 ## The compact instrument
 
@@ -18,14 +32,24 @@ The **diamond stays at the center** and represents your current remaining quota.
 
 The center is **your current state**, not 50% remaining. The two thin vertical bars show absolute remaining quota (battery icon) and time remaining in the window (clock icon).
 
-- Scroll over the dot scale to choose **1, 2, or 5 percentage points per dot**. Up selects a finer scale; down selects a wider one. Click the scale for a menu.
-- The selected **pp/dot stays visible below the scale**. The small slider beside the limit name adjusts mini-window opacity from **30–100%**, with the setting saved across launches.
-- Two dots on either side give ranges of **±2, ±4, or ±10 pp**. Center crosses complete the equally spaced scale.
-- At the upper limit, the diamond alternates between the service color and red every **0.8 seconds**, without fading. A chevron marks values beyond the scale. The warning threshold changes with the selected scale; it is not a provider-defined quota alert.
+- Time-budget mode is the default. A 5-hour session starts at **5m/dot**; a weekly window starts at **4h/dot**. Scroll over the scale to change spacing: up for finer, down for wider. Click for a selection menu.
+- Choose **`… → Dot unit → Percentage points`** to use the original **1, 2, or 5 pp/dot** scale. Time and pp selections are remembered separately, including separate session and weekly choices.
+- The selected unit **stays visible below the scale**. The small slider beside the limit name adjusts mini-window opacity from **30–100%**, with the setting saved across launches.
+- **Drag the dot scale or its bottom label to move the window.** A click without dragging still opens the spacing menu. Buttons and the opacity slider retain their own actions.
+- Two dots on either side define the visible range. Center crosses complete the equally spaced scale.
+- At the upper limit, the diamond alternates between the service color and red every **0.8 seconds**, without fading. A chevron marks values beyond the scale. The warning threshold follows the selected unit and spacing; it is not a provider-defined quota alert.
 - With macOS Reduce Motion enabled, the warning is steady red. An unavailable or stale observation pauses the warning and shows a status icon.
 - The symbol window is **110 × 148 points**. Choose the service at the top; the `…` menu contains pinning, values, full window, refresh, and corner placement.
 
 The full window adds history, a consumption forecast when enough observations exist, and rotary selectors for time range and display interval. The numeric mini window shows remaining quota, baseline, and reset time.
+
+| Scale | Default | Wheel choices | Range at default |
+| --- | --- | --- | --- |
+| Session (5 hours) | **5m/dot** | 5, 10, 15 minutes | ±10 minutes |
+| Weekly | **4h/dot** | 2, 4, 8 hours | ±8 hours |
+| Percentage points | 2 pp/dot | 1, 2, 5 pp | ±4 pp |
+
+Time means **equivalent consumption ahead of or behind the linear budget**. For example, a reference bar 10 minutes above center means you have used 10 minutes' worth of the linear budget early. It does not mean the quota will run out 10 minutes early. Other window durations use minute choices below one day and hour choices from one day onward, converted using their actual duration.
 
 ## Build and run
 
@@ -67,6 +91,7 @@ For a provider-reported window of duration `D` and reset time `R`:
 ```text
 baseline(t) = clamp(100 × (R − t) / D, 0, 100)
 deviation(t) = baseline(t) − last_observed_remaining
+budget_minutes_ahead(t) = deviation(t) × window_duration_minutes / 100
 ```
 
 The baseline moves with time. Actual remaining quota changes only after a successful observation. A linear budget is a planning reference; it does not predict provider capacity, replenish quota, or guarantee a future reset. Idle windows and expired windows awaiting a new observation are handled separately.
@@ -97,6 +122,6 @@ python3 tools/check_publication.py
 zsh tools/generate-demo.sh
 ```
 
-The tests cover account/cycle isolation, Claude retry and account-switch handling, quota parsing, forecasts, time and vertical scales, mini-window placement, dot spacing, and binary warning timing. Demo generation renders synthetic SwiftUI views into GIF frames using Apple's ImageIO, without reading accounts or running collectors.
+The tests cover account/cycle isolation, Claude retry and account-switch handling, quota parsing, forecasts, time and vertical scales, mini-window placement, time-budget conversion, dot spacing, warning boundaries, and binary warning timing. Demo generation renders synthetic SwiftUI views into GIF frames using Apple's ImageIO, without reading accounts or running collectors.
 
 Licensed under [MIT](LICENSE).
