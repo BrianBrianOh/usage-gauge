@@ -196,20 +196,11 @@ enum Formats {
         didSet { UserDefaults.standard.set(miniSymbols, forKey: "miniSymbols"); onChange?() }
     }
     @Published var miniScaleIndex = DotScale.bounded(UserDefaults.standard.object(forKey: "miniScaleIndex") as? Int ?? 1) {
-        didSet {
-            UserDefaults.standard.set(miniScaleIndex, forKey: "miniScaleIndex")
-            guard oldValue != miniScaleIndex else { return }
-            miniScaleFeedbackTask?.cancel()
-            miniScaleFeedback = true
-            miniScaleFeedbackTask = Task { @MainActor [weak self] in
-                try? await Task.sleep(for: .seconds(1.5))
-                guard !Task.isCancelled else { return }
-                self?.miniScaleFeedback = false
-            }
-        }
+        didSet { UserDefaults.standard.set(miniScaleIndex, forKey: "miniScaleIndex") }
     }
-    @Published var miniScaleFeedback = false
-    private var miniScaleFeedbackTask: Task<Void, Never>?
+    @Published var miniOpacity = MiniLayout.opacity(UserDefaults.standard.object(forKey: "miniOpacity") as? Double ?? 1) {
+        didSet { UserDefaults.standard.set(miniOpacity, forKey: "miniOpacity"); onChange?() }
+    }
     var onMoveMini: ((MiniCorner) -> Void)?
     var onChange: (() -> Void)?
     private var timer: Timer?
@@ -277,7 +268,7 @@ enum Formats {
         task.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
         task.arguments = [helper.path, "--state-dir", dataDirectory.path]
         var environment = ProcessInfo.processInfo.environment
-        environment["PATH"] = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+        environment["PATH"] = NSHomeDirectory() + "/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
         environment["PYTHONDONTWRITEBYTECODE"] = "1"
         task.environment = environment
         task.standardOutput = FileHandle.nullDevice
@@ -676,6 +667,7 @@ struct GaugeView: View {
     func updateChrome() {
         window?.level = model.alwaysOnTop ? .floating : .normal
         miniWindow?.level = model.miniOnTop ? .floating : .normal
+        miniWindow?.alphaValue = model.miniOpacity
         if let panel = miniWindow, panel.frame.size != MiniLayout.size(symbols: model.miniSymbols), let screen = panel.screen ?? NSScreen.main {
             panel.setFrame(MiniLayout.resized(panel.frame, to: MiniLayout.size(symbols: model.miniSymbols), in: screen.visibleFrame), display: true)
             panel.saveFrame(usingName: "UsageGaugeMiniWindow")
@@ -788,6 +780,7 @@ struct GaugeView: View {
             precondition(fullMini.maxX == smallMini.maxX && fullMini.maxY == smallMini.maxY)
             precondition(MiniLayout.resized(smallMini, to: MiniLayout.valueSize, in: secondaryDisplay) == fullMini)
             precondition(MiniLayout.countdown(-5) == "00:00:00" && MiniLayout.countdown(172801) == "48:00:01")
+            precondition(MiniLayout.opacity(0) == 0.3 && MiniLayout.opacity(2) == 1 && MiniLayout.opacity(0.65) == 0.65)
             // The reference moves up for a deficit, down for a reserve; one dot is 2 pp.
             precondition(UsageDeviation(remaining: 30, baseline: 30).normalized == 0)
             precondition(UsageDeviation(remaining: 30, baseline: 32).normalized == 0.5)

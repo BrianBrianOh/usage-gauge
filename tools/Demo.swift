@@ -16,16 +16,25 @@ struct DemoMini: View {
                 Spacer(minLength: 0)
                 Image(systemName: "ellipsis").font(.system(size: 10))
             }.frame(height: 20)
-            Text("Weekly").font(.system(size: 10)).foregroundStyle(FlightDeck.muted).frame(height: 14)
-            HStack(spacing: 6) {
-                VerticalComparison(remaining: remaining, baseline: baseline, color: FlightDeck.cyan, sampleTime: time)
-                    .frame(maxWidth: .infinity)
+            HStack(spacing: 2) {
+                Text("Weekly").font(.system(size: 10)).foregroundStyle(FlightDeck.muted)
+                Spacer(minLength: 0)
+                ZStack(alignment: .trailing) {
+                    Capsule().fill(FlightDeck.cyan).frame(height: 2)
+                    Circle().fill(FlightDeck.ink).frame(width: 7, height: 7)
+                }.frame(width: 36)
+            }.frame(height: 14)
+            HStack(alignment: .top, spacing: 6) {
+                VStack(spacing: 3) {
+                    VerticalComparison(remaining: remaining, baseline: baseline, color: FlightDeck.cyan, sampleTime: time).frame(height: 70)
+                    Text("2 pp/dot").font(.system(size: 8, design: .monospaced)).foregroundStyle(FlightDeck.muted).frame(height: 10)
+                }.frame(maxWidth: .infinity)
                 VStack(spacing: 4) {
                     RemainingBar(remaining: remaining, color: FlightDeck.cyan)
                     Image(systemName: "battery.0percent").font(.system(size: 9)).foregroundStyle(FlightDeck.muted).frame(height: 10)
                 }.frame(width: 12)
                 ResetBar(progress: baseline, expired: false, color: FlightDeck.cyan)
-            }.frame(height: 80)
+            }.frame(height: 84)
         }.padding(8).frame(width: 110, height: 148, alignment: .topLeading)
             .background(FlightDeck.panel, in: RoundedRectangle(cornerRadius: 12))
             .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.white.opacity(0.14), lineWidth: 1))

@@ -19,6 +19,7 @@ The **diamond stays at the center** and represents your current remaining quota.
 The center is **your current state**, not 50% remaining. The two thin vertical bars show absolute remaining quota (battery icon) and time remaining in the window (clock icon).
 
 - Scroll over the dot scale to choose **1, 2, or 5 percentage points per dot**. Up selects a finer scale; down selects a wider one. Click the scale for a menu.
+- The selected **pp/dot stays visible below the scale**. The small slider beside the limit name adjusts mini-window opacity from **30–100%**, with the setting saved across launches.
 - Two dots on either side give ranges of **±2, ±4, or ±10 pp**. Center crosses complete the equally spaced scale.
 - At the upper limit, the diamond alternates between the service color and red every **0.8 seconds**, without fading. A chevron marks values beyond the scale. The warning threshold changes with the selected scale; it is not a provider-defined quota alert.
 - With macOS Reduce Motion enabled, the warning is steady red. An unavailable or stale observation pauses the warning and shows a status icon.

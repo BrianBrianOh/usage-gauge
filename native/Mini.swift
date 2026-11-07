@@ -16,6 +16,7 @@ enum MiniCorner: String, CaseIterable {
 enum MiniLayout {
     static let valueSize = NSSize(width: 320, height: 184)
     static let symbolSize = NSSize(width: 110, height: 148)
+    static func opacity(_ value: Double) -> Double { value.isFinite ? min(1, max(0.3, value)) : 1 }
     static func size(symbols: Bool) -> NSSize { symbols ? symbolSize : valueSize }
     static func origin(_ corner: MiniCorner, in visible: NSRect, size: NSSize = MiniLayout.valueSize) -> NSPoint {
         NSPoint(x: (corner == .topRight || corner == .bottomRight) ? visible.maxX - size.width - 12 : visible.minX + 12,
@@ -155,9 +156,7 @@ struct MiniView: View {
                 }.menuStyle(.borderlessButton).menuIndicator(.hidden).accessibilityLabel("Limit")
             } else { Text(model.miniSymbols ? symbolTitle(quota) : quota.title) }
             Spacer(minLength: 0)
-            if model.miniSymbols && model.miniScaleFeedback {
-                Text("\(DotScale.label(model.miniScaleIndex)) pp/dot").font(.system(size: 8)).fixedSize().foregroundStyle(model.accent)
-            } else if model.miniSymbols && model.error != nil {
+            if model.miniSymbols && model.error != nil {
                 Image(systemName: "exclamationmark.triangle").font(.system(size: 9)).foregroundStyle(FlightDeck.amber)
                     .help("Refresh failed; showing the last observation")
             } else if model.miniSymbols && Date().timeIntervalSince1970 - quota.observedAt > Double(max(model.interval * 3, 600)) {
@@ -166,6 +165,13 @@ struct MiniView: View {
             } else if model.isRefreshing {
                 if model.miniSymbols { Image(systemName: "arrow.triangle.2.circlepath").font(.system(size: 8)).help("Updating…") }
                 else { Text("Updating…") }
+            }
+            if model.miniSymbols {
+                Slider(value: $model.miniOpacity, in: 0.3...1, step: 0.05)
+                    .labelsHidden().controlSize(.mini).tint(model.accent).frame(width: 36)
+                    .accessibilityLabel("Window opacity")
+                    .accessibilityValue("\(Int((model.miniOpacity * 100).rounded())) percent")
+                    .help("Window opacity: \(Int((model.miniOpacity * 100).rounded()))%")
             }
         }.font(.system(size: 10)).foregroundStyle(FlightDeck.muted).frame(height: 14)
     }
@@ -180,18 +186,22 @@ struct MiniView: View {
         let baseline = quota.isIdle ? nil : quota.baseline(time)
         let expired = !quota.isIdle && time >= quota.resetAt
         let stale = time - quota.observedAt > Double(max(model.interval * 3, 600))
-        return HStack(spacing: 6) {
-            VerticalComparison(remaining: quota.remaining, baseline: expired ? nil : baseline,
-                               pointsPerDot: DotScale.points(model.miniScaleIndex), isCurrent: !stale && model.error == nil, color: model.accent)
-                .frame(maxWidth: .infinity)
-                .overlay(DotScaleWheel(selection: $model.miniScaleIndex))
+        return HStack(alignment: .top, spacing: 6) {
+            VStack(spacing: 3) {
+                VerticalComparison(remaining: quota.remaining, baseline: expired ? nil : baseline,
+                                   pointsPerDot: DotScale.points(model.miniScaleIndex), isCurrent: !stale && model.error == nil, color: model.accent)
+                    .frame(height: 70)
+                    .overlay(DotScaleWheel(selection: $model.miniScaleIndex))
+                Text("\(DotScale.label(model.miniScaleIndex)) pp/dot")
+                    .font(.system(size: 8, design: .monospaced)).foregroundStyle(FlightDeck.muted).frame(height: 10)
+            }.frame(maxWidth: .infinity)
             VStack(spacing: 4) {
                 RemainingBar(remaining: quota.remaining, color: model.accent)
                 Image(systemName: "battery.0percent").font(.system(size: 9)).foregroundStyle(FlightDeck.muted).frame(height: 10)
                     .accessibilityHidden(true)
             }.frame(width: 12)
             ResetBar(progress: baseline, expired: expired, color: model.accent)
-        }.frame(height: 80)
+        }.frame(height: 84)
     }
     private func readings(_ quota: Quota, now: Date) -> some View {
         let time = now.timeIntervalSince1970
