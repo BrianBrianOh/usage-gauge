@@ -156,6 +156,10 @@ enum Formats {
     }
 }
 
+#if SCREENSHOT_RENDER
+// Documentation builds use an in-memory fixture with no accounts, preferences, or collectors.
+typealias UsageModel = ScreenshotModel
+#else
 @MainActor final class UsageModel: ObservableObject {
     @Published var snapshot = Snapshot()
     @Published var claudeSnapshot = Snapshot()
@@ -311,6 +315,7 @@ enum Formats {
     }
     func stop() { timer?.invalidate(); process?.terminate() }
 }
+#endif
 
 struct LegendItem: View {
     let text: String

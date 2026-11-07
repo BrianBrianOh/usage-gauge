@@ -1,10 +1,32 @@
 # Usage Gauge
 
-A small macOS instrument for Codex and Claude subscription usage. Compare your remaining quota with a linear budget through the next reset.
+**A cockpit instrument for your AI usage.**
+
+Usage Gauge brings the visual language of aircraft instruments to Codex and Claude on macOS: a glideslope-inspired deviation display, detented rotary selectors, thin reference marks, and compact readouts. Keep it in a corner of your screen and see whether your remaining quota is above or below a linear budget through the next reset.
+
+The cockpit influence is in the interaction, too. Your diamond stays fixed while the reference moves; the wheel changes scale one detent at a time; a direct red/service-color warning marks the upper limit. Open the full panel for history and forecasts, shrink to numbers, or strip it down to symbols.
 
 ![Codex and Claude in Usage Gauge: session time scale, weekly time scale, and percentage-point mode](docs/demo.gif)
 
 *All GIFs are rendered feature demonstrations using synthetic values and the app's instrument components. They contain no account data. Motion is accelerated to make the reference bar visible.*
+
+## Window modes
+
+**Full window.** Remaining quota, a moving linear baseline, usage history, a consumption forecast, and reset time. Two rotary selectors control the graph's time range and the readout's display interval.
+
+| Codex | Claude |
+| --- | --- |
+| ![Codex full window: remaining quota, history graph, reset countdown, and rotary selectors](docs/full-codex.png) | ![Claude full window: weekly quota, forecast, usage breakdown, and rotary selectors](docs/full-claude.png) |
+
+**Numeric mini · 320 × 184 points.** Remaining quota, linear baseline, and time to reset in a small window you can keep on top.
+
+| Codex | Claude |
+| --- | --- |
+| ![Codex numeric mini window with remaining quota, linear baseline, and reset time](docs/mini-codex.png) | ![Claude numeric mini window with weekly quota, linear baseline, and reset time](docs/mini-claude.png) |
+
+*These stills render the actual app views with synthetic fixtures, including the native rotary controls. No account is connected or read during generation.*
+
+**Symbols · 110 × 148 points.** The instrument shown above: a fixed diamond, moving budget reference, quota bar, and reset-time bar. The selected minutes, hours, or pp per dot stay visible beneath it.
 
 ## Feature demos
 
@@ -120,8 +142,9 @@ zsh native/build.sh
 "dist/Usage Gauge.app/Contents/MacOS/UsageGauge" --self-test
 python3 tools/check_publication.py
 zsh tools/generate-demo.sh
+zsh tools/generate-screenshots.sh
 ```
 
-The tests cover account/cycle isolation, Claude retry and account-switch handling, quota parsing, forecasts, time and vertical scales, mini-window placement, time-budget conversion, dot spacing, warning boundaries, and binary warning timing. Demo generation renders synthetic SwiftUI views into GIF frames using Apple's ImageIO, without reading accounts or running collectors.
+The tests cover account/cycle isolation, Claude retry and account-switch handling, quota parsing, forecasts, time and vertical scales, mini-window placement, time-budget conversion, dot spacing, warning boundaries, and binary warning timing. Demo generation renders synthetic SwiftUI views into GIF frames using Apple's ImageIO, without reading accounts or running collectors. Still-image generation hosts the actual full and numeric mini views off screen with a compile-time in-memory model; it does not capture the desktop, load preferences, or access account state.
 
 Licensed under [MIT](LICENSE).
