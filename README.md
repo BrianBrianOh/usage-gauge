@@ -2,7 +2,7 @@
 
 A small macOS instrument for Codex and Claude subscription usage. Compare your remaining quota with a linear budget through the next reset.
 
-![Usage Gauge: session time scale, weekly time scale, and percentage-point mode](docs/demo.gif)
+![Codex and Claude in Usage Gauge: session time scale, weekly time scale, and percentage-point mode](docs/demo.gif)
 
 *All GIFs are rendered feature demonstrations using synthetic values and the app's instrument components. They contain no account data. Motion is accelerated to make the reference bar visible.*
 
@@ -14,11 +14,11 @@ A small macOS instrument for Codex and Claude subscription usage. Compare your r
 
 **Budget warning.** The center stays fixed while the white reference moves. At the upper limit, the diamond switches directly between red and the service color.
 
-![Moving budget reference and binary warning](docs/warning.gif)
+![Claude mode: moving budget reference and red/amber warning](docs/warning.gif)
 
 **Dragging and opacity.** Move the compact instrument by dragging the dot area or bottom label. Use the small slider beside the limit name to adjust opacity.
 
-![Rendered demonstration of widget placement and opacity](docs/opacity.gif)
+![Claude mode: rendered demonstration of widget placement and opacity](docs/opacity.gif)
 
 ## The compact instrument
 

@@ -12,12 +12,14 @@ struct DemoMini: View {
     let unit: DotUnit
     var selection: Int? = nil
     var windowOpacity: Double = 1
+    var provider = "codex"
+    private var accent: Color { provider == "claude" ? FlightDeck.amber : FlightDeck.cyan }
     private var scale: DotScale { DotScale(unit: unit, durationMinutes: durationMinutes, index: selection ?? DotScale.defaultIndex(unit: unit, durationMinutes: durationMinutes)) }
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 4) {
                 Image(systemName: "chevron.down").font(.system(size: 8))
-                Text("Codex").font(.system(size: 11, weight: .semibold))
+                Text(provider.capitalized).font(.system(size: 11, weight: .semibold))
                 Spacer(minLength: 0)
                 Image(systemName: "ellipsis").font(.system(size: 10))
             }.frame(height: 20)
@@ -26,7 +28,7 @@ struct DemoMini: View {
                 Spacer(minLength: 0)
                 GeometryReader { geometry in
                     ZStack(alignment: .leading) {
-                        Capsule().fill(FlightDeck.cyan.opacity(0.5)).frame(height: 2)
+                        Capsule().fill(accent.opacity(0.5)).frame(height: 2)
                         Circle().fill(FlightDeck.ink).frame(width: 7, height: 7)
                             .offset(x: (geometry.size.width - 7) * (windowOpacity - 0.3) / 0.7)
                     }.frame(height: geometry.size.height)
@@ -34,14 +36,14 @@ struct DemoMini: View {
             }.frame(height: 14)
             HStack(alignment: .top, spacing: 6) {
                 VStack(spacing: 3) {
-                    VerticalComparison(remaining: remaining, baseline: baseline, scale: scale, color: FlightDeck.cyan, sampleTime: time).frame(height: 70)
+                    VerticalComparison(remaining: remaining, baseline: baseline, scale: scale, color: accent, sampleTime: time).frame(height: 70)
                     Text(scale.caption).font(.system(size: 8, design: .monospaced)).foregroundStyle(FlightDeck.muted).frame(height: 10)
                 }.frame(maxWidth: .infinity)
                 VStack(spacing: 4) {
-                    RemainingBar(remaining: remaining, color: FlightDeck.cyan)
+                    RemainingBar(remaining: remaining, color: accent)
                     Image(systemName: "battery.0percent").font(.system(size: 9)).foregroundStyle(FlightDeck.muted).frame(height: 10)
                 }.frame(width: 12)
-                ResetBar(progress: baseline, expired: false, color: FlightDeck.cyan)
+                ResetBar(progress: baseline, expired: false, color: accent)
             }.frame(height: 84)
         }.padding(8).frame(width: 110, height: 148, alignment: .topLeading)
             .background(FlightDeck.panel, in: RoundedRectangle(cornerRadius: 12))
@@ -58,7 +60,7 @@ struct DemoFrame: View {
             Text("Remaining quota relative to the next reset").font(.system(size: 12)).foregroundStyle(FlightDeck.muted).padding(.top, 5)
             HStack(spacing: 28) {
                 example("Session", detail: "On pace", remaining: 50, baseline: 50 + 0.4 * cos(time), durationMinutes: 300, unit: .time)
-                example("Weekly", detail: "Ahead of budget", remaining: 44, baseline: 50 - time / 20, durationMinutes: 10080, unit: .time)
+                example("Weekly", detail: "Ahead of budget", remaining: 44, baseline: 50 - time / 20, durationMinutes: 10080, unit: .time, provider: "claude")
                 example("pp mode", detail: "Reserve", remaining: 53, baseline: 50 - time / 20, durationMinutes: 10080, unit: .percentagePoints)
             }.padding(.top, 22).frame(maxWidth: .infinity)
             Text("SYNTHETIC DATA  ·  Minutes, hours, or pp  ·  Motion accelerated")
@@ -66,10 +68,10 @@ struct DemoFrame: View {
         }.padding(26).frame(width: 600, height: 330, alignment: .topLeading)
             .background(FlightDeck.screen).environment(\.colorScheme, .dark)
     }
-    private func example(_ title: String, detail: String, remaining: Double, baseline: Double, durationMinutes: Double, unit: DotUnit) -> some View {
+    private func example(_ title: String, detail: String, remaining: Double, baseline: Double, durationMinutes: Double, unit: DotUnit, provider: String = "codex") -> some View {
         VStack(spacing: 8) {
             Text(title).font(.system(size: 13, weight: .medium)).foregroundStyle(FlightDeck.ink)
-            DemoMini(remaining: remaining, baseline: baseline, time: time, durationMinutes: durationMinutes, unit: unit)
+            DemoMini(remaining: remaining, baseline: baseline, time: time, durationMinutes: durationMinutes, unit: unit, provider: provider)
             Text(detail).font(.system(size: 10)).foregroundStyle(FlightDeck.muted)
         }.frame(maxWidth: .infinity)
     }
@@ -139,7 +141,7 @@ struct FeatureFrame: View {
         let scale = DotScale(unit: .time, durationMinutes: 10080, index: 1)
         let deviation = UsageDeviation(remaining: remaining, baseline: baseline, pointsPerDot: scale.pointsPerDot)
         return HStack(spacing: 34) {
-            DemoMini(remaining: remaining, baseline: baseline, time: time, durationMinutes: 10080, unit: .time)
+            DemoMini(remaining: remaining, baseline: baseline, time: time, durationMinutes: 10080, unit: .time, provider: "claude")
                 .scaleEffect(1.2).frame(width: 170, height: 190)
             VStack(alignment: .leading, spacing: 12) {
                 Text(deviation.warning ? "Upper limit" : (deviation.difference ?? 0) > 0 ? "Ahead of budget" : "Reserve")
@@ -161,7 +163,7 @@ struct FeatureFrame: View {
                             .frame(width: row % 2 == 0 ? 360 : 250, height: 8)
                     }
                 }.padding(20)
-                DemoMini(remaining: 52, baseline: 50, time: time, durationMinutes: 10080, unit: .time, windowOpacity: opacity)
+                DemoMini(remaining: 52, baseline: 50, time: time, durationMinutes: 10080, unit: .time, windowOpacity: opacity, provider: "claude")
                     .position(x: 75 + (geometry.size.width - 150) * (0.5 - 0.5 * cos(time / 9.6 * 2 * Double.pi)), y: geometry.size.height / 2)
                 Text("\(Int((opacity * 100).rounded()))% opacity").font(.system(size: 12, design: .monospaced))
                     .foregroundStyle(FlightDeck.ink).padding(12).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
