@@ -18,6 +18,13 @@ import UniformTypeIdentifiers
     @Published var miniMode = false
     @Published var miniOnTop = true
     @Published var miniSymbols = false
+    @Published var miniHUD = false
+    @Published var miniAutoContrast = false
+    @Published var hudContrastMap: NSImage?
+    @Published var hudContrastUnits: [HUDContrastUnit] = []
+    var onHUDContrastUnitsChanged: (([HUDContrastUnit]) -> Void)?
+    @Published var hudContrastStatus = HUDContrastStatus.off
+    var onRequestHUDContrastPermission: (() -> Void)?
     @Published var miniOpacity = 1.0
     @Published var miniDotUnit = DotUnit.time
     @Published var miniDotIndex = 0
@@ -103,6 +110,7 @@ private final class DocumentationWindow: NSWindow {
         let host = NSHostingView(rootView: content.environment(\.displayScale, 2))
         host.frame = NSRect(origin: .zero, size: size); host.appearance = NSAppearance(named: .darkAqua)
         let window = DocumentationWindow(contentRect: host.frame, styleMask: .borderless, backing: .buffered, defer: false)
+        window.isOpaque = false; window.backgroundColor = .clear; window.hasShadow = false
         window.isReleasedWhenClosed = false; window.contentView = host; window.setContentSize(size)
         host.layoutSubtreeIfNeeded()
         RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.12))

@@ -18,7 +18,7 @@ The cockpit influence is in the interaction, too. Your diamond stays fixed while
 | --- | --- |
 | ![Codex full window: remaining quota, history graph, reset countdown, and rotary selectors](docs/full-codex.png) | ![Claude full window: weekly quota, forecast, usage breakdown, and rotary selectors](docs/full-claude.png) |
 
-**Numeric mini · 320 × 228 points.** Exact remaining quota and linear baseline on the left, the symbol instrument on the right, and reset time below. Read the numbers and your pace together in a small window you can keep on top. The instrument keeps the same wheel/click scale selection, drag behavior, and warning as symbols-only mode; its unit and spacing stay in sync when switching modes. The opacity slider sits beside the limit selector.
+**Numeric mini · 320 × 228 points.** Exact remaining quota and linear baseline on the left, the symbol instrument on the right, and reset time below. Read the numbers and your pace together in a small window you can keep on top. The instrument keeps the same wheel/click scale selection and warning as symbols-only mode; its unit and spacing stay in sync when switching modes. Normal mode supports dragging the instrument; HUD mode uses only its cursor-box handle. The opacity slider sits beside the limit selector.
 
 | Codex | Claude |
 | --- | --- |
@@ -38,7 +38,7 @@ The cockpit influence is in the interaction, too. Your diamond stays fixed while
 
 ## Feature demos
 
-**Time and pp scales.** Session minutes, weekly hours, and percentage points each have three wheel-selectable intervals. The selected scale stays visible.
+**Time and pp scales.** Session minutes and percentage points have three wheel-selectable intervals. Weekly time has six: 2h, 4h, 8h, 1d, 2d, and 4d. The selected scale stays visible.
 
 ![Changing session, weekly, and percentage-point dot spacing](docs/scales.gif)
 
@@ -65,10 +65,16 @@ The center is **your current state**, not 50% remaining. The two thin vertical b
 - Time-budget mode is the default. A 5-hour session starts at **5m/dot**; a weekly window starts at **4h/dot**. Scroll over the scale to change spacing: up for finer, down for wider. Click for a selection menu.
 - Choose **`… → Dot unit → Percentage points`** to use the original **1, 2, or 5 pp/dot** scale. Time and pp selections are remembered separately, including separate session and weekly choices.
 - The selected unit **stays visible below the scale**. The small slider beside the limit name adjusts mini-window opacity from **30–100%**, with the setting saved across launches.
-- **Drag the dot scale or its bottom label to move the window.** A click without dragging still opens the spacing menu. Buttons and the opacity slider retain their own actions.
-- Two dots on either side define the visible range. Center crosses complete the equally spaced scale.
+- Choose **`… → HUD mode`** for green-only mini instruments on a transparent window. A single faint, centered green edge and stronger instrument outlines keep the marks readable without doubled strokes. It works in symbol and numeric mini modes and is remembered across launches. The opacity control and both menu-bar batteries also turn HUD green. The diamond is normally a bright hollow outline; pace warnings blink it fully off and on. The menu-bar menu offers the same HUD toggle and restores normal battery colors when HUD is turned off.
+- **`… → Automatic contrast`** reads the background beneath the mini HUD only, excluding Usage Gauge's own windows. Each word or instrument unit uses one solid bright or dark green, keeping background textures from splitting its strokes. The center instrument and scale label share a tone; the two remaining bars and their icons share another. A small hysteresis band prevents rapid switching near the brightness threshold. The menu-bar batteries keep their fixed HUD green. A cropped, event-driven stream supports up to 30 updates per second; idle frames and unchanged tone decisions are skipped, and classification runs off the main thread. Screen Recording permission is required. Only cropped images are processed in memory; no screen images or audio are saved or transmitted. Without permission, the HUD keeps its bright green and offers **Allow background access…** in the options menu.
+- In HUD mode, the scroll target is the diamond's bounding square, including its hollow center. A nearly invisible input surface keeps that empty center interactive. Only the small cursor box between the service name and options moves the window. Service names remain clickable, while dragging a name, the diamond, the scale label, or the background does not move the HUD.
+- In normal mode, **drag the dot scale or its bottom label to move the window.** A click on the scale without dragging opens the spacing menu. Buttons and the opacity slider retain their own actions.
+- Two dots above and below the center cross define the equally spaced difference scale.
+- The diamond's top and bottom mark ±0.4 dot around the center: ±2 equivalent budget minutes at 5m/dot. Its full height is 80% of one dot interval, so its reading band changes with the selected scale.
+- The bottom scale label stays short (`5m`, `2h`, or `2pp`); the menu and tooltip explain the per-dot spacing.
+- The difference scale sits to the left of the diamond. Between the usage and time bars, a separate shared scale marks 25%, 50%, and 75% with identical short horizontal ticks; each bar runs from 0% at the bottom to 100% at the top.
 - At the upper limit, the diamond alternates between the service color and red every **0.8 seconds**, without fading. A chevron marks values beyond the scale. The warning threshold follows the selected unit and spacing; it is not a provider-defined quota alert.
-- With macOS Reduce Motion enabled, the warning is steady red. An unavailable or stale observation pauses the warning and shows a status icon.
+- With macOS Reduce Motion enabled, the warning is steady red in normal mode or a steady hollow green diamond in HUD mode. An unavailable or stale observation pauses the warning and shows a status icon.
 - The symbol window is **110 × 148 points**. Choose the service at the top; the `…` menu contains pinning, values, full window, refresh, and corner placement.
 - Click the service or limit name to open its menu. Symbol mode keeps the limit label short (`Session`, `Weekly`, or a model name such as `Fable`) and reserves room for warning icons and opacity; the menu shows the full limit names.
 
@@ -77,7 +83,7 @@ The full window adds history, a consumption forecast when enough observations ex
 | Scale | Default | Wheel choices | Range at default |
 | --- | --- | --- | --- |
 | Session (5 hours) | **5m/dot** | 5, 10, 15 minutes | ±10 minutes |
-| Weekly | **4h/dot** | 2, 4, 8 hours | ±8 hours |
+| Weekly | **4h/dot** | 2h, 4h, 8h, 1d, 2d, 4d | ±8 hours |
 | Percentage points | 2 pp/dot | 1, 2, 5 pp | ±4 pp |
 
 Time means **equivalent consumption ahead of or behind the linear budget**. For example, a reference bar 10 minutes above center means you have used 10 minutes' worth of the linear budget early. It does not mean the quota will run out 10 minutes early. Other window durations use minute choices below one day and hour choices from one day onward, converted using their actual duration.

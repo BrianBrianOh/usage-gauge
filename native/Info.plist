@@ -26,5 +26,7 @@
 	<string>Personal local usage monitor</string>
 	<key>NSSupportsAutomaticGraphicsSwitching</key>
 	<true/>
+	<key>NSScreenCaptureUsageDescription</key>
+	<string>Usage Gauge reads only the background beneath its mini HUD to choose readable green colors. Images and audio are not saved or transmitted.</string>
 </dict>
 </plist>

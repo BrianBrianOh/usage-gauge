@@ -233,6 +233,19 @@ typealias UsageModel = ScreenshotModel
     @Published var miniSymbols = UserDefaults.standard.bool(forKey: "miniSymbols") {
         didSet { UserDefaults.standard.set(miniSymbols, forKey: "miniSymbols"); onChange?() }
     }
+    @Published var miniHUD = UserDefaults.standard.bool(forKey: "miniHUD") {
+        didSet { UserDefaults.standard.set(miniHUD, forKey: "miniHUD"); onChange?() }
+    }
+    @Published var miniAutoContrast = UserDefaults.standard.bool(forKey: "miniAutoContrast") {
+        didSet { UserDefaults.standard.set(miniAutoContrast, forKey: "miniAutoContrast"); onChange?() }
+    }
+    @Published var hudContrastMap: NSImage?
+    @Published var hudContrastUnits: [HUDContrastUnit] = [] {
+        didSet { if hudContrastUnits != oldValue { onHUDContrastUnitsChanged?(hudContrastUnits) } }
+    }
+    var onHUDContrastUnitsChanged: (([HUDContrastUnit]) -> Void)?
+    @Published var hudContrastStatus = HUDContrastStatus.off
+    var onRequestHUDContrastPermission: (() -> Void)?
     @Published var miniScaleIndex = DotScale.bounded(UserDefaults.standard.object(forKey: "miniScaleIndex") as? Int ?? 1) {
         didSet { UserDefaults.standard.set(miniScaleIndex, forKey: "miniScaleIndex") }
     }
@@ -242,7 +255,7 @@ typealias UsageModel = ScreenshotModel
     @Published var miniSessionTimeIndex = DotScale.bounded(UserDefaults.standard.object(forKey: "miniSessionTimeIndex") as? Int ?? 0) {
         didSet { UserDefaults.standard.set(miniSessionTimeIndex, forKey: "miniSessionTimeIndex") }
     }
-    @Published var miniWeeklyTimeIndex = DotScale.bounded(UserDefaults.standard.object(forKey: "miniWeeklyTimeIndex") as? Int ?? 1) {
+    @Published var miniWeeklyTimeIndex = DotScale.bounded(UserDefaults.standard.object(forKey: "miniWeeklyTimeIndex") as? Int ?? 1, count: DotScale.weeklyMinutes.count) {
         didSet { UserDefaults.standard.set(miniWeeklyTimeIndex, forKey: "miniWeeklyTimeIndex") }
     }
     var miniDotIndex: Int {
@@ -252,7 +265,7 @@ typealias UsageModel = ScreenshotModel
         }
         set {
             if miniDotUnit == .percentagePoints { miniScaleIndex = DotScale.bounded(newValue) }
-            else if DotScale.isLongWindow(quota?.durationMinutes ?? 300) { miniWeeklyTimeIndex = DotScale.bounded(newValue) }
+            else if DotScale.isLongWindow(quota?.durationMinutes ?? 300) { miniWeeklyTimeIndex = DotScale.bounded(newValue, count: DotScale.weeklyMinutes.count) }
             else { miniSessionTimeIndex = DotScale.bounded(newValue) }
         }
     }
@@ -391,9 +404,10 @@ struct SharedLimitBanner: View {
 /// Marks a service whose limits are at risk, including the one not on screen.
 struct RiskDot: View {
     let risk: LimitRisk?
+    var tint: Color? = nil
     var body: some View {
         if let risk {
-            Circle().fill(risk.color).frame(width: 5, height: 5).accessibilityLabel(risk.label)
+            Circle().fill(tint ?? risk.color).frame(width: 5, height: 5).accessibilityLabel(risk.label)
         }
     }
 }
@@ -710,29 +724,30 @@ enum StatusBattery {
         let risk: LimitRisk?
         var failed = false
     }
-    static let body = NSSize(width: 34, height: 13)
+    static let body = NSSize(width: 28, height: 13)
     static let nub = NSSize(width: 1.5, height: 5)
-    static let gap: CGFloat = 5
+    static let gap: CGFloat = 3
     static let font = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .bold)
-    static func label(_ gauge: Gauge) -> String { "\(gauge.letter) \(gauge.remaining.map { String(Int($0.rounded())) } ?? "–")" }
-    static func image(_ gauges: [Gauge], description: String) -> NSImage {
+    static func label(_ gauge: Gauge) -> String { "\(gauge.letter)\(gauge.remaining.map { String(Int($0.rounded())) } ?? "–")" }
+    static func image(_ gauges: [Gauge], description: String, hud: Bool = false) -> NSImage {
         let slot = body.width + 1 + nub.width
         let size = NSSize(width: CGFloat(gauges.count) * slot + CGFloat(max(0, gauges.count - 1)) * gap, height: body.height + 2)
-        // Drawn on demand, so the ink follows the menu bar's light or dark appearance.
+        // Normal ink follows the menu bar appearance; HUD ink stays green.
         let image = NSImage(size: size, flipped: false) { _ in
             for (index, gauge) in gauges.enumerated() {
-                draw(gauge, in: NSRect(x: CGFloat(index) * (slot + gap), y: 1, width: body.width, height: body.height))
+                draw(gauge, in: NSRect(x: CGFloat(index) * (slot + gap), y: 1, width: body.width, height: body.height), hud: hud)
             }
             return true
         }
         image.cacheMode = .never
+        image.isTemplate = false
         image.accessibilityDescription = description
         return image
     }
-    private static func draw(_ gauge: Gauge, in frame: NSRect) {
+    private static func draw(_ gauge: Gauge, in frame: NSRect, hud: Bool) {
         guard let context = NSGraphicsContext.current?.cgContext else { return }
-        let ink = NSColor.labelColor.withAlphaComponent(gauge.failed ? 0.45 : 1)
-        let riskColor: NSColor? = gauge.risk == .critical ? .systemRed : gauge.risk == .warning ? .systemOrange : nil
+        let ink = (hud ? NSColor(MiniPalette.hudGreen) : .labelColor).withAlphaComponent(gauge.failed ? 0.45 : 1)
+        let riskColor: NSColor? = hud ? nil : gauge.risk == .critical ? .systemRed : gauge.risk == .warning ? .systemOrange : nil
         context.beginTransparencyLayer(auxiliaryInfo: nil)
         // A nearly empty fill is only a sliver, so a limit at risk also colours the case.
         (riskColor ?? ink.withAlphaComponent(ink.alphaComponent * 0.5)).set()
@@ -761,7 +776,10 @@ enum StatusBattery {
     var statusItem: NSStatusItem!
     var topMenuItem: NSMenuItem!
     var miniMenuItem: NSMenuItem!
+    var hudMenuItem: NSMenuItem!
     var wakeObserver: NSObjectProtocol?
+    var screenObserver: NSObjectProtocol?
+    var contrastController: HUDContrastController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
@@ -787,10 +805,11 @@ enum StatusBattery {
         miniWindow = MiniPanel(contentRect: NSRect(origin: .zero, size: MiniLayout.size(symbols: model.miniSymbols)), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         miniWindow.title = "Usage Gauge Mini"
         miniWindow.isReleasedWhenClosed = false; miniWindow.isFloatingPanel = true; miniWindow.hidesOnDeactivate = false
-        miniWindow.isMovableByWindowBackground = true; miniWindow.isOpaque = false; miniWindow.backgroundColor = .clear; miniWindow.hasShadow = true
+        miniWindow.isMovableByWindowBackground = !model.miniHUD; miniWindow.isOpaque = false; miniWindow.backgroundColor = .clear; miniWindow.hasShadow = !model.miniHUD
         miniWindow.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         let miniHost = MiniHostingView(rootView: MiniView(model: model))
         miniHost.sizingOptions = []
+        miniHost.wantsLayer = true; miniHost.layer?.backgroundColor = NSColor.clear.cgColor
         miniWindow.contentView = miniHost
         miniWindow.delegate = self
         let restoredMini = miniWindow.setFrameUsingName("UsageGaugeMiniWindow")
@@ -805,11 +824,23 @@ enum StatusBattery {
         let refresh = statusMenu.addItem(withTitle: "Refresh Usage", action: #selector(refreshNow), keyEquivalent: ""); refresh.target = self
         topMenuItem = statusMenu.addItem(withTitle: "Keep on Top", action: #selector(toggleOnTop), keyEquivalent: ""); topMenuItem.target = self
         miniMenuItem = statusMenu.addItem(withTitle: "Mini Mode", action: #selector(toggleMiniMode), keyEquivalent: ""); miniMenuItem.target = self
+        hudMenuItem = statusMenu.addItem(withTitle: "HUD Mode", action: #selector(toggleHUDMode), keyEquivalent: ""); hudMenuItem.target = self
         statusMenu.addItem(.separator())
         statusMenu.addItem(withTitle: "Quit Usage Gauge", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         statusItem.menu = statusMenu
         model.onChange = { [weak self] in self?.updateChrome() }
         model.onMoveMini = { [weak self] corner in self?.moveMini(to: corner) }
+        contrastController = HUDContrastController(regions: { [weak self] in self?.contrastRegions() ?? [] },
+            onMask: { [weak self] _, image in self?.model.hudContrastMap = image },
+            onStatus: { [weak self] status in self?.model.hudContrastStatus = status },
+            onUserStop: { [weak self] in self?.model.miniAutoContrast = false })
+        model.onRequestHUDContrastPermission = { [weak self] in self?.contrastController?.requestPermission() }
+        model.onHUDContrastUnitsChanged = { [weak self] units in self?.contrastController?.setUnits(units) }
+        contrastController?.setUnits(model.hudContrastUnits)
+        screenObserver = NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
+            object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in self?.contrastController?.geometryChanged() }
+            }
         updateChrome(); showWindow(); model.start()
         wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.model.refreshAll() }
@@ -819,17 +850,25 @@ enum StatusBattery {
         window?.level = model.alwaysOnTop ? .floating : .normal
         miniWindow?.level = model.miniOnTop ? .floating : .normal
         miniWindow?.alphaValue = model.miniOpacity
+        miniWindow?.hasShadow = !model.miniHUD
+        miniWindow?.isMovableByWindowBackground = !model.miniHUD
+        miniWindow?.invalidateShadow()
         if let panel = miniWindow, panel.frame.size != MiniLayout.size(symbols: model.miniSymbols), let screen = panel.screen ?? NSScreen.main {
             panel.setFrame(MiniLayout.resized(panel.frame, to: MiniLayout.size(symbols: model.miniSymbols), in: screen.visibleFrame), display: true)
             panel.saveFrame(usingName: "UsageGaugeMiniWindow")
         }
         topMenuItem?.state = (model.miniMode ? model.miniOnTop : model.alwaysOnTop) ? .on : .off
         miniMenuItem?.state = model.miniMode ? .on : .off
+        hudMenuItem?.state = model.miniHUD ? .on : .off
         if displayedMini != model.miniMode {
             displayedMini = model.miniMode
             if model.miniMode { window?.orderOut(nil); miniWindow?.orderFront(nil) }
             else { miniWindow?.orderOut(nil); window?.makeKeyAndOrderFront(nil) }
         }
+        updateStatusImage()
+        contrastController?.setEnabled(model.miniHUD && model.miniAutoContrast && model.miniMode)
+    }
+    private func updateStatusImage() {
         guard let button = statusItem?.button else { return }
         // Both services always report: G for Codex (GPT), C for Claude.
         let now = Date().timeIntervalSince1970
@@ -845,9 +884,22 @@ enum StatusBattery {
                 + (service.snapshot.error == nil ? "" : " · refresh failed")
         }
         button.title = ""
-        button.image = StatusBattery.image(gauges, description: summaries.joined(separator: "; "))
+        button.image = StatusBattery.image(gauges, description: summaries.joined(separator: "; "), hud: model.miniHUD)
         button.imagePosition = .imageOnly
         button.toolTip = summaries.joined(separator: "\n")
+    }
+    private func contrastRegions() -> [HUDCaptureRegion] {
+        var result: [HUDCaptureRegion] = []
+        if model.miniMode, let panel = miniWindow, panel.isVisible {
+            result.append(HUDCaptureRegion(target: .mini, frame: panel.frame, scale: panel.screen?.backingScaleFactor ?? 2))
+        }
+        return result
+    }
+    func windowDidMove(_ notification: Notification) {
+        if notification.object as? NSWindow === miniWindow { contrastController?.geometryChanged(.mini) }
+    }
+    func windowDidResize(_ notification: Notification) {
+        if notification.object as? NSWindow === miniWindow { contrastController?.geometryChanged(.mini) }
     }
     func moveMini(to corner: MiniCorner) {
         guard let panel = miniWindow, let screen = panel.screen ?? window?.screen ?? NSScreen.main else { return }
@@ -859,17 +911,22 @@ enum StatusBattery {
         else { window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true) }
     }
     @objc func toggleMiniMode() { model.miniMode.toggle() }
+    @objc func toggleHUDMode() {
+        model.miniHUD.toggle()
+        if model.miniHUD { model.miniMode = true }
+    }
     @objc func refreshNow() { model.refresh() }
     @objc func toggleOnTop() { if model.miniMode { model.miniOnTop.toggle() } else { model.alwaysOnTop.toggle() } }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool { showWindow(); return true }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
-    func applicationWillTerminate(_ notification: Notification) { model.stop() }
+    func applicationWillTerminate(_ notification: Notification) { contrastController?.stop(); model.stop() }
 }
 
 #if !DEMO_RENDER
 @main struct UsageGaugeMain {
     @MainActor static func main() {
         if CommandLine.arguments.contains("--self-test") {
+            HUDContrastMask.selfTest()
             let points = (0...72).map { Sample(t: Double($0 * 3600), remaining: 100 - Double($0) / 24 * 20) }
             let quota = Quota(id: "test", name: "codex", durationMinutes: 10080, resetAt: 604800, remaining: 40, observedAt: 259200, points: points)
             precondition(abs(quota.baseline(259200) - 57.142857) < 0.00001)
@@ -941,8 +998,8 @@ enum StatusBattery {
             let at = 1920309663.0
             precondition(first[0].limitRisk(now: at) == nil && first[1].limitRisk(now: at) == .critical && first[2].limitRisk(now: at) == nil)
             precondition(stored.riskiest(now: at)?.quota.id == "claude:seven_day" && stored.glance?.id == "claude:seven_day")
-            precondition(StatusBattery.label(.init(letter: "G", remaining: 12.4, risk: nil)) == "G 12")
-            precondition(StatusBattery.label(.init(letter: "C", remaining: nil, risk: nil)) == "C –")
+            precondition(StatusBattery.label(.init(letter: "G", remaining: 12.4, risk: nil)) == "G12")
+            precondition(StatusBattery.label(.init(letter: "C", remaining: nil, risk: nil)) == "C–")
             precondition(stored.sharedConstraints(for: first[2], now: at).map(\.quota.id) == ["claude:seven_day"])
             precondition(stored.sharedConstraints(for: first[0], now: at).map(\.quota.id) == ["claude:seven_day"])
             precondition(stored.sharedConstraints(for: first[1], now: at).isEmpty)
@@ -995,9 +1052,9 @@ enum StatusBattery {
             let sessionScale = DotScale(unit: .time, durationMinutes: 300, index: DotScale.defaultIndex(unit: .time, durationMinutes: 300))
             let weeklyScale = DotScale(unit: .time, durationMinutes: 10080, index: DotScale.defaultIndex(unit: .time, durationMinutes: 10080))
             precondition(sessionScale.caption == "5m/dot" && sessionScale.options == [5, 10, 15] && sessionScale.limitText == "10 minutes")
-            precondition(weeklyScale.caption == "4h/dot" && weeklyScale.options == [120, 240, 480] && weeklyScale.limitText == "8 hours")
+            precondition(weeklyScale.caption == "4h/dot" && weeklyScale.options == DotScale.weeklyMinutes && weeklyScale.limitText == "8 hours")
             for duration in [300.0, 10080.0] {
-                for index in 0...2 {
+                for index in 0..<(duration >= 1440 ? DotScale.weeklyMinutes.count : 3) {
                     let scale = DotScale(unit: .time, durationMinutes: duration, index: index)
                     precondition(abs(scale.pointsPerDot * duration / 100 - scale.options[index]) < 1e-9)
                     let one = UsageDeviation(remaining: 50, baseline: 50 + scale.pointsPerDot, pointsPerDot: scale.pointsPerDot)
@@ -1010,6 +1067,8 @@ enum StatusBattery {
                 }
             }
             precondition(DotScale(unit: .percentagePoints, durationMinutes: 10080, index: 1).caption == "2 pp/dot")
+            precondition((0..<6).map { DotScale(unit: .time, durationMinutes: 10080, index: $0).compactCaption } == ["2h", "4h", "8h", "1d", "2d", "4d"])
+            precondition(DotScale(unit: .time, durationMinutes: 10080, index: 5).diamondHalfSpanText == "1 day 14 hours 24 minutes")
             precondition(WarningFlash.isRed(at: 0) && WarningFlash.isRed(at: 0.799))
             precondition(!WarningFlash.isRed(at: 0.8) && !WarningFlash.isRed(at: 1.599) && WarningFlash.isRed(at: 1.6))
             print("PASS: session/weekly time defaults and conversion, time alert boundaries, pp scales, binary flash timing, deviation direction/clipping/stale suppression, mini placement/countdown, baseline, forecast, missing history, offline snapshot, time bounds, adaptive vertical axis, display precision, Claude cycle jitter, short-window forecast, Claude limits/idle/extras/legacy, Claude read recovery, limit risk and shared limits")
