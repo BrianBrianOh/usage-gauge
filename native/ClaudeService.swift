@@ -184,6 +184,33 @@ enum ClaudeCLI {
     }
 }
 
+/// Whether a Claude read is in flight, and through which path. Every way a read can end
+/// (data, failure, timeout, a sign-in started by hand, a stalled reader) returns it to idle.
+struct ClaudeReadState {
+    enum Phase { case idle, cli, web }
+    /// The CLI watchdog (75 s) plus the web wait (25 s), with margin.
+    static let staleAfter: Double = 120
+    private(set) var phase = Phase.idle
+    private(set) var generation = 0
+    private var startedAt: Double = 0
+    var reading: Bool { phase != .idle }
+    var awaitingWeb: Bool { phase == .web }
+    /// Starts a read unless one is genuinely in flight; a read past the stale bound is abandoned.
+    mutating func begin(now: Double) -> Bool {
+        guard phase == .idle || now - startedAt >= Self.staleAfter else { return false }
+        phase = .cli; startedAt = now; generation += 1; return true
+    }
+    /// Late answers from an abandoned read are ignored.
+    func isCurrent(_ read: Int) -> Bool { read == generation && reading }
+    mutating func fallBackToWeb() { phase = .web }
+    /// The connection window takes over from a background web wait, so that wait ends here.
+    @discardableResult mutating func signInStarted() -> Bool {
+        guard phase == .web else { return false }
+        phase = .idle; return true
+    }
+    mutating func finish() { phase = .idle }
+}
+
 @MainActor final class ClaudeService: NSObject, WKScriptMessageHandler, WKNavigationDelegate, WKUIDelegate {
     private let directory: URL
     private let onUpdate: (Snapshot) -> Void
@@ -191,8 +218,7 @@ enum ClaudeCLI {
     private var loginWindow: NSWindow?
     private var lastURL: String?
     private var hasLoaded = false
-    private var reading = false
-    private var webReadPending = false
+    private var state = ClaudeReadState()
     private var previous = Snapshot()
     private var timeout: DispatchWorkItem?
     private let usagePage = URL(string: "https://claude.ai/settings/usage")!
@@ -247,6 +273,8 @@ enum ClaudeCLI {
 
     @objc private func emailLogin() {
         timeout?.cancel(); hasLoaded = true
+        // Without its timeout, a pending web read would otherwise block every later refresh.
+        if state.signInStarted() { onUpdate(previous) }
         webView.load(URLRequest(url: URL(string: "https://claude.ai/login?returnTo=%2Fsettings%2Fusage")!))
     }
     @objc private func openInBrowser() {
@@ -263,26 +291,25 @@ enum ClaudeCLI {
 
     /// Claude Code is the primary source; the claude.ai page is used only when it cannot answer.
     func refresh() {
-        guard !reading else { return }
-        reading = true
-        webReadPending = false
+        guard state.begin(now: Date().timeIntervalSince1970) else { return }
         timeout?.cancel()
+        let read = state.generation
         ClaudeCLI.read(directory: directory) { [weak self] outcome in
-            guard let self else { return }
+            guard let self, self.state.isCurrent(read) else { return }
             switch outcome {
             case .reading(let organization, let plan, let usage):
                 if !self.ingest(usage, organization: organization, source: "Claude Code", plan: plan) {
-                    self.refreshWeb(fallback: "Claude Code reported no plan limits.")
+                    self.refreshWeb(fallback: "Claude Code reported no plan limits.", read: read)
                 }
             case .failure(let message):
-                self.refreshWeb(fallback: message)
+                self.refreshWeb(fallback: message, read: read)
             }
         }
     }
-    private func refreshWeb(fallback message: String) {
+    private func refreshWeb(fallback message: String, read: Int) {
         let connected = hasLoaded || UserDefaults.standard.bool(forKey: "claudeWebConnected") || previous.source == "claude.ai" || (previous.source == nil && !previous.windows.isEmpty)
         guard connected else { report(message); return }
-        webReadPending = true
+        state.fallBackToWeb()
         if !hasLoaded {
             hasLoaded = true; webView.load(URLRequest(url: usagePage))
         } else {
@@ -293,7 +320,7 @@ enum ClaudeCLI {
         }
         timeout?.cancel()
         let work = DispatchWorkItem { [weak self] in
-            guard let self, self.webReadPending else { return }
+            guard let self, self.state.awaitingWeb, self.state.isCurrent(read) else { return }
             self.report(message + " The web connection did not respond either; open Account to reconnect.")
         }
         timeout = work; DispatchQueue.main.asyncAfter(deadline: .now() + 25, execute: work)
@@ -301,7 +328,7 @@ enum ClaudeCLI {
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         // A background page must not overwrite a newer Claude Code observation.
-        guard webReadPending || (!reading && loginWindow?.isVisible == true),
+        guard state.awaitingWeb || (!state.reading && loginWindow?.isVisible == true),
               message.frameInfo.isMainFrame,
               message.frameInfo.request.url?.host == "claude.ai",
               let payload = message.body as? [String: Any],
@@ -321,7 +348,7 @@ enum ClaudeCLI {
         var snapshot = Snapshot(); snapshot.accountKey = account; snapshot.fetchedAt = now; snapshot.windows = windows
         snapshot.source = source; snapshot.plan = plan ?? (previous.accountKey == account ? previous.plan : nil)
         snapshot.extra = ClaudeUsage.extra(body); snapshot.breakdown = ClaudeUsage.breakdown(body)
-        previous = snapshot; timeout?.cancel(); reading = false; webReadPending = false
+        previous = snapshot; timeout?.cancel(); state.finish()
         persist(snapshot); onUpdate(snapshot)
         return true
     }
@@ -329,7 +356,7 @@ enum ClaudeCLI {
         if let data = try? JSONEncoder().encode(snapshot) { try? data.write(to: directory.appendingPathComponent("claude-state.json"), options: .atomic) }
     }
     private func report(_ message: String) {
-        timeout?.cancel(); reading = false; webReadPending = false
+        timeout?.cancel(); state.finish()
         var value = previous; value.error = message
         previous = value; persist(value); onUpdate(value)
     }
@@ -339,7 +366,7 @@ enum ClaudeCLI {
         }
     }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-        guard webReadPending, (error as NSError).code != NSURLErrorCancelled else { return }
+        guard state.awaitingWeb, (error as NSError).code != NSURLErrorCancelled else { return }
         report("Unable to load the Claude connection page. Try again or sign in to Claude Code.")
     }
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {

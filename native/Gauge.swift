@@ -73,14 +73,48 @@ struct Quota: Codable, Identifiable {
     }
 }
 
+/// How close a limit is to stopping work. Pace against the linear baseline is a separate signal.
+enum LimitRisk: Int, Comparable {
+    case warning = 1, critical = 2
+    static func < (a: LimitRisk, b: LimitRisk) -> Bool { a.rawValue < b.rawValue }
+    var color: Color { self == .critical ? FlightDeck.alert : FlightDeck.caution }
+    var label: String { self == .critical ? "Limit critical" : "Limit warning" }
+}
+
 extension Quota {
-    /// The server's own grading of this meter, when it sends one.
-    var severityColor: Color? {
+    /// Unscoped limits (the session and all-model weekly windows) count every model and surface.
+    var isAccountWide: Bool { name == "codex" || name == "claude" }
+    /// Claude grades its own meters; other limits use remaining capacity. Either way, a recent
+    /// pace that empties the limit before it resets is at least a warning.
+    func limitRisk(now: Double) -> LimitRisk? {
+        guard !isIdle, now < resetAt else { return nil }
+        var risk: LimitRisk?
         switch severity {
-        case "warning": return FlightDeck.caution
-        case "critical": return FlightDeck.alert
-        default: return nil
+        case "critical": risk = .critical
+        case "warning": risk = .warning
+        case .some: risk = nil
+        case nil: risk = remaining <= 10 ? .critical : remaining <= 25 ? .warning : nil
         }
+        if let burn = dailyBurn, burn > 0, remaining - burn * (resetAt - observedAt) / 86400 < 0 { risk = max(risk ?? .warning, .warning) }
+        return risk
+    }
+}
+
+extension Snapshot {
+    /// The limit a compact indicator shows: the server's pick, else the tightest started window.
+    var glance: Quota? {
+        windows.first { $0.active == true } ?? windows.filter { !$0.isIdle }.min { $0.remaining < $1.remaining } ?? windows.first
+    }
+    /// The most serious limit at risk, tightest first: what a glance at this service should report.
+    func riskiest(now: Double) -> (quota: Quota, risk: LimitRisk)? {
+        windows.compactMap { quota in quota.limitRisk(now: now).map { (quota: quota, risk: $0) } }
+            .max { $0.risk != $1.risk ? $0.risk < $1.risk : $0.quota.remaining > $1.quota.remaining }
+    }
+    /// Other account-wide limits at risk, which also stop the work counted in `quota`.
+    func sharedConstraints(for quota: Quota, now: Double) -> [(quota: Quota, risk: LimitRisk)] {
+        windows.filter { $0.id != quota.id && $0.isAccountWide }
+            .compactMap { other in other.limitRisk(now: now).map { (quota: other, risk: $0) } }
+            .sorted { $0.risk > $1.risk }
     }
 }
 
@@ -331,6 +365,39 @@ struct LegendItem: View {
     }
 }
 
+/// Says when another account-wide limit can stop work before the selected one.
+struct SharedLimitBanner: View {
+    let constraint: (quota: Quota, risk: LimitRisk)
+    let extra: ExtraUsage?
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 10))
+            VStack(alignment: .leading, spacing: 2) {
+                Text("\(constraint.quota.title): \(Formats.percent(constraint.quota.remaining)) left · \(constraint.risk.label)")
+                    .font(.system(size: 11, weight: .medium))
+                Text("It counts all usage, so it can stop work before this limit does." + (extra.map { $0.enabled ? " Extra usage is on." : " Extra usage is off." } ?? ""))
+                    .font(.system(size: 10)).foregroundStyle(FlightDeck.muted).lineLimit(2)
+            }
+            Spacer(minLength: 0)
+        }
+        .foregroundStyle(constraint.risk.color)
+        .padding(.horizontal, 10).padding(.vertical, 7)
+        .background(constraint.risk.color.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
+        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(constraint.risk.color.opacity(0.5), lineWidth: 1))
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// Marks a service whose limits are at risk, including the one not on screen.
+struct RiskDot: View {
+    let risk: LimitRisk?
+    var body: some View {
+        if let risk {
+            Circle().fill(risk.color).frame(width: 5, height: 5).accessibilityLabel(risk.label)
+        }
+    }
+}
+
 struct LiveMetrics: View {
     let quota: Quota
     let accent: Color
@@ -340,7 +407,7 @@ struct LiveMetrics: View {
             let baseline = quota.baseline(context.date.timeIntervalSince1970)
             let gap = quota.remaining - baseline
             HStack(spacing: 16) {
-                ReserveDial(remaining: quota.remaining, accent: quota.severityColor ?? accent)
+                ReserveDial(remaining: quota.remaining, accent: quota.limitRisk(now: context.date.timeIntervalSince1970)?.color ?? accent)
                 Rectangle().fill(.white.opacity(0.09)).frame(width: 1, height: 88)
                 VStack(alignment: .leading, spacing: 9) {
                     HStack {
@@ -484,6 +551,9 @@ struct GaugeView: View {
             VStack(alignment: .leading, spacing: 8) {
                 header
                 sourceSelector
+                if let quota = model.quota, let constraint = model.activeSnapshot.sharedConstraints(for: quota, now: context.date.timeIntervalSince1970).first {
+                    SharedLimitBanner(constraint: constraint, extra: model.provider == "claude" ? model.claudeSnapshot.extra : nil)
+                }
                 if let quota = model.quota, quota.isIdle {
                     Spacer()
                     idleCard(quota)
@@ -531,13 +601,16 @@ struct GaugeView: View {
     private var sourceSelector: some View {
         HStack(spacing: 7) {
             ForEach(["codex", "claude"], id: \.self) { provider in
+                let alert = (provider == "claude" ? model.claudeSnapshot : model.snapshot).riskiest(now: Date().timeIntervalSince1970)
                 Button { model.provider = provider } label: {
                     HStack(spacing: 6) {
-                        Circle().fill(model.provider == provider ? model.accent : FlightDeck.muted.opacity(0.35)).frame(width: 4, height: 4)
+                        Circle().fill(alert?.risk.color ?? (model.provider == provider ? model.accent : FlightDeck.muted.opacity(0.35)))
+                            .frame(width: alert == nil ? 4 : 6, height: alert == nil ? 4 : 6)
                         Text(provider.capitalized)
                     }
                 }.buttonStyle(PanelButton(active: model.provider == provider, accent: model.accent))
-                .accessibilityLabel(provider.capitalized)
+                .help(alert.map { "\($0.quota.title): \(Formats.percent($0.quota.remaining)) left · \($0.risk.label)" } ?? "")
+                .accessibilityLabel(provider.capitalized + (alert.map { ", " + $0.risk.label } ?? ""))
                 .accessibilityAddTraits(model.provider == provider ? .isSelected : [])
             }
             Spacer(minLength: 4)
@@ -563,7 +636,7 @@ struct GaugeView: View {
                 Text(expired ? "Reset time passed. Waiting for a new observation." : quota.forecastText)
                     .font(.system(size: 10)).lineLimit(1).minimumScaleFactor(0.85)
             }.foregroundStyle(FlightDeck.muted).help("Estimate based on the most recent \(quota.lookbackText) of observed consumption.")
-            if model.provider == "claude" { claudeNotes(quota) }
+            if model.provider == "claude" { claudeNotes(quota, now: now) }
             HStack {
                 if let error = model.error {
                     Annunciator(label: "Refresh failed · last known data", color: FlightDeck.amber).help(error)
@@ -573,16 +646,17 @@ struct GaugeView: View {
                     Text("Updated \(Formats.date(quota.observedAt)) \(Formats.zone)").font(FlightDeck.label(8)).foregroundStyle(FlightDeck.muted)
                 }
                 Spacer(minLength: 2)
-                if let color = quota.severityColor {
-                    Annunciator(label: quota.severity == "critical" ? "Critical" : "Warning", color: color)
-                        .help("Claude's own reading of this limit")
+                if let risk = quota.limitRisk(now: now.timeIntervalSince1970) {
+                    Annunciator(label: risk.label, color: risk.color)
+                        .help(quota.severity != nil ? "Claude's own reading of how close this limit is to stopping work" : "Little capacity left, or the recent pace empties this limit before it resets")
                 }
                 Text(model.sourceLabel).font(FlightDeck.label(7)).foregroundStyle(FlightDeck.muted.opacity(0.7))
             }
         }.padding(.horizontal, 12).padding(.vertical, 10).modifier(Bezel())
     }
-    @ViewBuilder private func claudeNotes(_ quota: Quota) -> some View {
-        if let extra = model.claudeSnapshot.extra {
+    @ViewBuilder private func claudeNotes(_ quota: Quota, now: Date) -> some View {
+        // The shared-limit banner already states extra usage when it is shown.
+        if let extra = model.claudeSnapshot.extra, model.activeSnapshot.sharedConstraints(for: quota, now: now.timeIntervalSince1970).isEmpty {
             HStack(spacing: 5) {
                 Image(systemName: extra.enabled ? "plus.circle" : "stop.circle").font(.system(size: 9))
                 Text(extra.summary).font(.system(size: 10)).lineLimit(1).minimumScaleFactor(0.85)
@@ -625,6 +699,57 @@ struct GaugeView: View {
             }.labelsHidden().controlSize(.mini).frame(width: 80)
                 .help("Account usage is fetched at this interval. Display step only changes the local instruments.")
         }.font(FlightDeck.label(9)).frame(height: 24).padding(.horizontal, 3)
+    }
+}
+
+/// Menu bar batteries with the service letter and percentage drawn inside, as on the iOS battery.
+enum StatusBattery {
+    struct Gauge {
+        let letter: String
+        let remaining: Double?
+        let risk: LimitRisk?
+        var failed = false
+    }
+    static let body = NSSize(width: 34, height: 13)
+    static let nub = NSSize(width: 1.5, height: 5)
+    static let gap: CGFloat = 5
+    static let font = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .bold)
+    static func label(_ gauge: Gauge) -> String { "\(gauge.letter) \(gauge.remaining.map { String(Int($0.rounded())) } ?? "–")" }
+    static func image(_ gauges: [Gauge], description: String) -> NSImage {
+        let slot = body.width + 1 + nub.width
+        let size = NSSize(width: CGFloat(gauges.count) * slot + CGFloat(max(0, gauges.count - 1)) * gap, height: body.height + 2)
+        // Drawn on demand, so the ink follows the menu bar's light or dark appearance.
+        let image = NSImage(size: size, flipped: false) { _ in
+            for (index, gauge) in gauges.enumerated() {
+                draw(gauge, in: NSRect(x: CGFloat(index) * (slot + gap), y: 1, width: body.width, height: body.height))
+            }
+            return true
+        }
+        image.cacheMode = .never
+        image.accessibilityDescription = description
+        return image
+    }
+    private static func draw(_ gauge: Gauge, in frame: NSRect) {
+        guard let context = NSGraphicsContext.current?.cgContext else { return }
+        let ink = NSColor.labelColor.withAlphaComponent(gauge.failed ? 0.45 : 1)
+        let riskColor: NSColor? = gauge.risk == .critical ? .systemRed : gauge.risk == .warning ? .systemOrange : nil
+        context.beginTransparencyLayer(auxiliaryInfo: nil)
+        // A nearly empty fill is only a sliver, so a limit at risk also colours the case.
+        (riskColor ?? ink.withAlphaComponent(ink.alphaComponent * 0.5)).set()
+        let outline = NSBezierPath(roundedRect: frame.insetBy(dx: 0.5, dy: 0.5), xRadius: 3.5, yRadius: 3.5)
+        outline.lineWidth = 1; outline.stroke()
+        NSBezierPath(roundedRect: NSRect(x: frame.maxX + 1, y: frame.midY - nub.height / 2, width: nub.width, height: nub.height), xRadius: 0.75, yRadius: 0.75).fill()
+        let inner = frame.insetBy(dx: 2, dy: 2)
+        (riskColor ?? ink).setFill()
+        let level = min(1, max(0, (gauge.remaining ?? 0) / 100))
+        NSBezierPath(roundedRect: NSRect(x: inner.minX, y: inner.minY, width: inner.width * level, height: inner.height), xRadius: 1.5, yRadius: 1.5).fill()
+        // XOR cuts the text out of the fill and keeps it solid over the empty part.
+        context.setBlendMode(.xor)
+        let text = NSAttributedString(string: label(gauge), attributes: [.font: font, .foregroundColor: ink])
+        let width = text.size().width
+        text.draw(at: NSPoint(x: frame.midX - width / 2, y: frame.midY - font.capHeight / 2 + font.descender))
+        context.setBlendMode(.normal)
+        context.endTransparencyLayer()
     }
 }
 
@@ -706,14 +831,23 @@ struct GaugeView: View {
             else { miniWindow?.orderOut(nil); window?.makeKeyAndOrderFront(nil) }
         }
         guard let button = statusItem?.button else { return }
-        let headline = model.headline
-        let percentage = headline.map { Formats.percent($0.remaining) } ?? "—"
-        button.title = " " + (model.provider == "claude" ? "A " : "C ") + percentage + (model.error == nil ? "" : " !")
-        let level = min(100, max(0, Int((headline?.remaining ?? 0) / 25) * 25))
-        button.image = NSImage(systemSymbolName: "battery.\(level)percent", accessibilityDescription: "Account usage")
-        button.imagePosition = .imageLeading
-        button.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)
-        button.toolTip = "\(model.provider == "claude" ? "Claude" : "Codex") · \(headline?.title ?? "Usage") · \(percentage) remaining"
+        // Both services always report: G for Codex (GPT), C for Claude.
+        let now = Date().timeIntervalSince1970
+        let services = [(letter: "G", name: "Codex", snapshot: model.snapshot), (letter: "C", name: "Claude", snapshot: model.claudeSnapshot)]
+        let gauges = services.map { service in
+            StatusBattery.Gauge(letter: service.letter, remaining: service.snapshot.glance?.remaining,
+                                risk: service.snapshot.riskiest(now: now)?.risk, failed: service.snapshot.error != nil)
+        }
+        let summaries = services.map { service -> String in
+            let quota = service.snapshot.glance
+            return "\(service.name) · \(quota?.title ?? "No data") · \(quota.map { Formats.percent($0.remaining) } ?? "—") remaining"
+                + (service.snapshot.riskiest(now: now).map { " · \($0.risk.label)" } ?? "")
+                + (service.snapshot.error == nil ? "" : " · refresh failed")
+        }
+        button.title = ""
+        button.image = StatusBattery.image(gauges, description: summaries.joined(separator: "; "))
+        button.imagePosition = .imageOnly
+        button.toolTip = summaries.joined(separator: "\n")
     }
     func moveMini(to corner: MiniCorner) {
         guard let panel = miniWindow, let screen = panel.screen ?? window?.screen ?? NSScreen.main else { return }
@@ -760,6 +894,21 @@ struct GaugeView: View {
             precondition(GaugeScale.precision(0.1) == 5 && GaugeScale.precision(2) == 1)
             precondition(ClaudeUsage.sameCycle(1920434399.539, 1920434400.34))
             precondition(!ClaudeUsage.sameCycle(1920434400, 1920434400 + 18000))
+            // Claude Code fails, the web fallback starts, then the person opens email sign-in
+            // (which cancels the web wait) and closes the window without finishing.
+            var reads = ClaudeReadState()
+            precondition(reads.begin(now: 0) && !reads.begin(now: 1))
+            reads.fallBackToWeb(); reads.signInStarted()
+            precondition(reads.begin(now: 600), "Claude reads stay blocked after an abandoned sign-in")
+            // Sign-in during the Claude Code read leaves that read alone; a timeout ends a web wait.
+            let cliRead = reads.generation
+            precondition(!reads.signInStarted() && reads.isCurrent(cliRead))
+            reads.fallBackToWeb(); reads.finish()
+            precondition(!reads.isCurrent(cliRead) && reads.begin(now: 601))
+            // A reader that never answers is abandoned after the stale bound, and its late answer ignored.
+            let stalled = reads.generation
+            precondition(!reads.begin(now: 601 + ClaudeReadState.staleAfter - 1))
+            precondition(reads.begin(now: 601 + ClaudeReadState.staleAfter) && !reads.isCurrent(stalled))
             // A 5-hour window forecasts from its last hour instead of waiting for 24 hours.
             let session = Quota(id: "test", name: "claude", durationMinutes: 300, resetAt: 18000, remaining: 80, observedAt: 7200,
                                 points: (0...4).map { Sample(t: Double($0 * 1800), remaining: 100 - Double($0) * 5) })
@@ -787,6 +936,24 @@ struct GaugeView: View {
             let second = ClaudeUsage.merge(jittered, into: stored, account: "a", now: 1920309783)
             precondition(second.count == 1 && second[0].points.count == 2 && second[0].resetAt == 1920434400)
             precondition(ClaudeUsage.merge(jittered, into: stored, account: "b", now: 1920309783)[0].points.count == 1)
+            // Limit risk, separate from pace: Claude's grade first. The critical all-model weekly
+            // limit constrains the idle session and the Fable limit, which look untouched on their own.
+            let at = 1920309663.0
+            precondition(first[0].limitRisk(now: at) == nil && first[1].limitRisk(now: at) == .critical && first[2].limitRisk(now: at) == nil)
+            precondition(stored.riskiest(now: at)?.quota.id == "claude:seven_day" && stored.glance?.id == "claude:seven_day")
+            precondition(StatusBattery.label(.init(letter: "G", remaining: 12.4, risk: nil)) == "G 12")
+            precondition(StatusBattery.label(.init(letter: "C", remaining: nil, risk: nil)) == "C –")
+            precondition(stored.sharedConstraints(for: first[2], now: at).map(\.quota.id) == ["claude:seven_day"])
+            precondition(stored.sharedConstraints(for: first[0], now: at).map(\.quota.id) == ["claude:seven_day"])
+            precondition(stored.sharedConstraints(for: first[1], now: at).isEmpty)
+            precondition(first[1].limitRisk(now: first[1].resetAt) == nil)
+            // Without a grade: 10% and 25% bounds; a server "normal" is trusted; an emptying pace warns.
+            func codex(_ remaining: Double, severity: String? = nil) -> Quota {
+                Quota(id: "c", name: "codex", durationMinutes: 10080, resetAt: 604800, remaining: remaining, observedAt: 0, points: [], severity: severity)
+            }
+            precondition(codex(10).limitRisk(now: 1) == .critical && codex(25).limitRisk(now: 1) == .warning && codex(26).limitRisk(now: 1) == nil)
+            precondition(codex(5, severity: "normal").limitRisk(now: 1) == nil)
+            precondition(quota.limitRisk(now: 259200) == .warning)
             let extra = ClaudeUsage.extra(rows)
             precondition(extra?.enabled == true && extra?.used == 12.5 && extra?.summary.contains("$12.50") == true)
             precondition(ClaudeUsage.breakdown(rows)?.first?.name == "Claude Code")
@@ -845,7 +1012,7 @@ struct GaugeView: View {
             precondition(DotScale(unit: .percentagePoints, durationMinutes: 10080, index: 1).caption == "2 pp/dot")
             precondition(WarningFlash.isRed(at: 0) && WarningFlash.isRed(at: 0.799))
             precondition(!WarningFlash.isRed(at: 0.8) && !WarningFlash.isRed(at: 1.599) && WarningFlash.isRed(at: 1.6))
-            print("PASS: session/weekly time defaults and conversion, time alert boundaries, pp scales, binary flash timing, deviation direction/clipping/stale suppression, mini placement/countdown, baseline, forecast, missing history, offline snapshot, time bounds, adaptive vertical axis, display precision, Claude cycle jitter, short-window forecast, Claude limits/idle/extras/legacy")
+            print("PASS: session/weekly time defaults and conversion, time alert boundaries, pp scales, binary flash timing, deviation direction/clipping/stale suppression, mini placement/countdown, baseline, forecast, missing history, offline snapshot, time bounds, adaptive vertical axis, display precision, Claude cycle jitter, short-window forecast, Claude limits/idle/extras/legacy, Claude read recovery, limit risk and shared limits")
             return
         }
         let application = NSApplication.shared

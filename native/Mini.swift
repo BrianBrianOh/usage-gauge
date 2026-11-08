@@ -96,14 +96,17 @@ struct MiniView: View {
                         Text("Claude").tag("claude")
                     }.pickerStyle(.inline)
                 } label: {
-                    HStack(spacing: 3) {
-                        Text(model.provider.capitalized).font(.system(size: 11, weight: .semibold))
-                        Image(systemName: "chevron.down").font(.system(size: 6))
-                    }.foregroundStyle(model.accent)
+                    Text(model.provider.capitalized).font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(model.accent)
                 }.menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().accessibilityLabel("Service")
+                // Menu labels draw only text and images, so the other service's mark sits beside it.
+                let other = model.provider == "claude" ? "codex" : "claude"
+                RiskDot(risk: risk(of: other)).help(risk(of: other).map { "\(other.capitalized): \($0.label)" } ?? "")
             } else {
                 ForEach(["codex", "claude"], id: \.self) { provider in
-                    Button(provider.capitalized) { model.provider = provider }
+                    Button { model.provider = provider } label: {
+                        HStack(spacing: 3) { Text(provider.capitalized); RiskDot(risk: risk(of: provider)) }
+                    }
                         .buttonStyle(.plain).font(.system(size: 11, weight: model.provider == provider ? .semibold : .regular))
                         .foregroundStyle(model.provider == provider ? model.accent : FlightDeck.muted)
                         .accessibilityAddTraits(model.provider == provider ? .isSelected : [])
@@ -158,32 +161,50 @@ struct MiniView: View {
                         Button(model.miniSymbols ? symbolTitle(item) : item.title) { model.selectedID = item.id }
                     }
                 } label: {
-                    HStack(spacing: 3) { Text(model.miniSymbols ? symbolTitle(quota) : quota.title).lineLimit(1); Image(systemName: "chevron.down").font(.system(size: 7)) }
-                }.menuStyle(.borderlessButton).menuIndicator(.hidden).accessibilityLabel("Limit")
-            } else { Text(model.miniSymbols ? symbolTitle(quota) : quota.title) }
+                    HStack(spacing: 3) {
+                        Text(model.miniSymbols ? symbolTitle(quota, compact: true) : quota.title)
+                            .font(.system(size: 10))
+                            .foregroundStyle(FlightDeck.muted)
+                            .lineLimit(1).fixedSize(horizontal: model.miniSymbols, vertical: false)
+                        if !model.miniSymbols { Image(systemName: "chevron.down").font(.system(size: 7)) }
+                    }
+                }.menuStyle(.borderlessButton).menuIndicator(.hidden)
+                    .frame(width: model.miniSymbols ? 40 : nil, alignment: .leading).layoutPriority(1)
+                    .accessibilityLabel("Limit").accessibilityValue(symbolTitle(quota))
+                    .help("Select limit: \(symbolTitle(quota))")
+            } else { Text(model.miniSymbols ? symbolTitle(quota, compact: true) : quota.title) }
+            if let constraint = model.activeSnapshot.sharedConstraints(for: quota, now: Date().timeIntervalSince1970).first {
+                Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 9)).frame(width: model.miniSymbols ? 9 : nil).foregroundStyle(constraint.risk.color)
+                    .help("\(constraint.quota.title): \(Formats.percent(constraint.quota.remaining)) left · \(constraint.risk.label). It counts all usage, so it can stop work before this limit does.")
+                    .accessibilityLabel("Shared limit at risk")
+            }
             Spacer(minLength: 0)
             if model.miniSymbols && model.error != nil {
-                Image(systemName: "exclamationmark.triangle").font(.system(size: 9)).foregroundStyle(FlightDeck.amber)
+                Image(systemName: "exclamationmark.triangle").font(.system(size: 9)).frame(width: 9).foregroundStyle(FlightDeck.amber)
                     .help("Refresh failed; showing the last observation")
             } else if model.miniSymbols && Date().timeIntervalSince1970 - quota.observedAt > Double(max(model.interval * 3, 600)) {
-                Image(systemName: "clock.badge.exclamationmark").font(.system(size: 9)).foregroundStyle(FlightDeck.amber)
+                Image(systemName: "clock.badge.exclamationmark").font(.system(size: 9)).frame(width: 9).foregroundStyle(FlightDeck.amber)
                     .help("The last observation is out of date")
             } else if model.isRefreshing {
-                if model.miniSymbols { Image(systemName: "arrow.triangle.2.circlepath").font(.system(size: 8)).help("Updating…") }
+                if model.miniSymbols { Image(systemName: "arrow.triangle.2.circlepath").font(.system(size: 8)).frame(width: 9).help("Updating…") }
                 else { Text("Updating…") }
             }
             Slider(value: $model.miniOpacity, in: 0.3...1, step: 0.05)
-                .labelsHidden().controlSize(.mini).tint(model.accent).frame(width: model.miniSymbols ? 36 : 60)
+                .labelsHidden().controlSize(.mini).tint(model.accent)
+                .frame(minWidth: model.miniSymbols ? 28 : 60, idealWidth: model.miniSymbols ? 36 : 60, maxWidth: model.miniSymbols ? 36 : 60)
                 .accessibilityLabel("Window opacity")
                 .accessibilityValue("\(Int((model.miniOpacity * 100).rounded())) percent")
                 .help("Window opacity: \(Int((model.miniOpacity * 100).rounded()))%")
         }.font(.system(size: 10)).foregroundStyle(FlightDeck.muted).frame(height: 14)
     }
-    private func symbolTitle(_ quota: Quota) -> String {
+    private func risk(of provider: String) -> LimitRisk? {
+        (provider == "claude" ? model.claudeSnapshot : model.snapshot).riskiest(now: Date().timeIntervalSince1970)?.risk
+    }
+    private func symbolTitle(_ quota: Quota, compact: Bool = false) -> String {
         let period = quota.durationMinutes == 300 ? "Session" : quota.durationMinutes == 10080 ? "Weekly" : "Current window"
         guard quota.name != "codex" && quota.name != "claude" else { return period }
         let name = quota.name.replacingOccurrences(of: #"\d+(?:\.\d+)*"#, with: "", options: .regularExpression).trimmingCharacters(in: .whitespaces)
-        return name + " · " + period
+        return compact ? name : name + " · " + period
     }
     private func symbols(_ quota: Quota, now: Date) -> some View {
         let time = now.timeIntervalSince1970
@@ -201,7 +222,8 @@ struct MiniView: View {
                         .foregroundStyle(FlightDeck.muted).allowsHitTesting(false))
             }.frame(maxWidth: .infinity)
             VStack(spacing: 4) {
-                RemainingBar(remaining: quota.remaining, color: model.accent)
+                // Capacity takes the limit-risk colour; the diamond keeps reporting pace.
+                RemainingBar(remaining: quota.remaining, color: quota.limitRisk(now: time)?.color ?? model.accent)
                 Image(systemName: "battery.0percent").font(.system(size: 9)).foregroundStyle(FlightDeck.muted).frame(height: 10)
                     .accessibilityHidden(true)
             }.frame(width: 12)
@@ -215,7 +237,7 @@ struct MiniView: View {
         return VStack(alignment: .leading, spacing: 7) {
             HStack(alignment: .center, spacing: 12) {
                 VStack(alignment: .leading, spacing: 6) {
-                    metric("Remaining", value: Formats.percent(quota.remaining), size: 28, color: model.accent)
+                    metric("Remaining", value: Formats.percent(quota.remaining), size: 28, color: quota.limitRisk(now: time)?.color ?? model.accent)
                     metric("Linear baseline", value: quota.isIdle ? "—" : String(format: "%.*f%%", GaugeScale.precision(model.displayStep), quota.baseline(time)), size: 19, color: FlightDeck.ink)
                 }
                 Rectangle().fill(.white.opacity(0.09)).frame(width: 1, height: 84)

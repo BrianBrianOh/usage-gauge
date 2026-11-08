@@ -62,6 +62,7 @@ The center is **your current state**, not 50% remaining. The two thin vertical b
 - At the upper limit, the diamond alternates between the service color and red every **0.8 seconds**, without fading. A chevron marks values beyond the scale. The warning threshold follows the selected unit and spacing; it is not a provider-defined quota alert.
 - With macOS Reduce Motion enabled, the warning is steady red. An unavailable or stale observation pauses the warning and shows a status icon.
 - The symbol window is **110 × 148 points**. Choose the service at the top; the `…` menu contains pinning, values, full window, refresh, and corner placement.
+- Click the service or limit name to open its menu. Symbol mode keeps the limit label short (`Session`, `Weekly`, or a model name such as `Fable`) and reserves room for warning icons and opacity; the menu shows the full limit names.
 
 The full window adds history, a consumption forecast when enough observations exist, and rotary selectors for time range and display interval. The numeric mini window pairs remaining quota and baseline numbers with the symbol instrument, with reset time below.
 
