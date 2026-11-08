@@ -60,6 +60,13 @@ struct WindowDragRegion: NSViewRepresentable {
 
 struct MiniView: View {
     @ObservedObject var model: UsageModel
+    private var renderTime: TimeInterval? {
+        #if SCREENSHOT_RENDER
+        model.renderTime
+        #else
+        nil
+        #endif
+    }
     var body: some View {
         VStack(alignment: .leading, spacing: model.miniSymbols ? 5 : 7) {
             header
@@ -214,7 +221,7 @@ struct MiniView: View {
         return HStack(alignment: .top, spacing: 6) {
             VStack(spacing: 3) {
                 VerticalComparison(remaining: quota.remaining, baseline: expired ? nil : baseline,
-                                   scale: model.miniDotScale, isCurrent: !stale && model.error == nil, color: model.accent)
+                                   scale: model.miniDotScale, isCurrent: !stale && model.error == nil, color: model.accent, sampleTime: renderTime)
                     .frame(height: 70)
                     .overlay(DotScaleWheel(selection: $model.miniDotIndex, labels: model.miniDotScale.optionNames))
                 WindowDragRegion().frame(height: 10)

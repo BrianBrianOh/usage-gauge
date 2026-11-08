@@ -6,9 +6,9 @@ Usage Gauge brings the visual language of aircraft instruments to Codex and Clau
 
 The cockpit influence is in the interaction, too. Your diamond stays fixed while the reference moves; the wheel changes scale one detent at a time; a direct red/service-color warning marks the upper limit. Open the full panel for history and forecasts, keep numbers beside the instrument in mini mode, or strip it down to symbols.
 
-![Codex and Claude in Usage Gauge: session time scale, weekly time scale, and percentage-point mode](docs/demo.gif)
+![Current symbol mode: Codex session, Claude weekly, and Claude Fable with percentage-point spacing](docs/demo.gif)
 
-*All GIFs are rendered feature demonstrations using synthetic values and the app's instrument components. They contain no account data. Motion is accelerated to make the reference bar visible.*
+*All GIFs render the current app views with synthetic values, including the native menus and opacity slider. They contain no account data. Motion is accelerated to make the reference bar visible.*
 
 ## Window modes
 
@@ -27,6 +27,14 @@ The cockpit influence is in the interaction, too. Your diamond stays fixed while
 *These stills render the actual app views with synthetic fixtures, including the native rotary controls. No account is connected or read during generation.*
 
 **Symbols · 110 × 148 points.** The instrument shown above: a fixed diamond, moving budget reference, quota bar, and reset-time bar. The selected minutes, hours, or pp per dot stay visible beneath it.
+
+| Codex · Session | Claude · Weekly |
+| --- | --- |
+| ![Codex session symbol mode with no selector arrows and the current muted limit label](docs/symbols-codex.png) | ![Claude weekly symbol mode with the matching font and muted limit label](docs/symbols-claude.png) |
+
+| Claude · Session | Claude · Fable |
+| --- | --- |
+| ![Claude session symbol mode with a fully visible Session label](docs/symbols-claude-session.png) | ![Claude Fable symbol mode with a fully visible Fable label](docs/symbols-claude-fable.png) |
 
 ## Feature demos
 
@@ -146,6 +154,6 @@ zsh tools/generate-demo.sh
 zsh tools/generate-screenshots.sh
 ```
 
-The tests cover account/cycle isolation, Claude retry and account-switch handling, quota parsing, forecasts, time and vertical scales, mini-window placement, time-budget conversion, dot spacing, warning boundaries, and binary warning timing. Demo generation renders synthetic SwiftUI views into GIF frames using Apple's ImageIO, without reading accounts or running collectors. Still-image generation hosts the actual full and numeric mini views off screen with a compile-time in-memory model; it does not capture the desktop, load preferences, or access account state.
+The tests cover account/cycle isolation, Claude retry and account-switch handling, quota parsing, forecasts, time and vertical scales, mini-window placement, time-budget conversion, dot spacing, warning boundaries, and binary warning timing. Both documentation generators host the actual app views off screen with the same compile-time in-memory model and native controls. GIFs use a fixed animation sample time for the binary warning. Stills include full, numeric mini, and symbol windows, with Claude session, weekly, and Fable examples. Neither generator captures the desktop, loads preferences, reads accounts, or starts collectors.
 
 Licensed under [MIT](LICENSE).

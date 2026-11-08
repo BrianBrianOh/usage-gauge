@@ -3,53 +3,20 @@ import SwiftUI
 import ImageIO
 import UniformTypeIdentifiers
 
-/// Offline documentation rendering. No UsageModel, collectors, preferences, or account files.
+/// Uses the shipping MiniView with an in-memory fixture; no duplicate symbol layout.
 struct DemoMini: View {
-    let remaining: Double
-    let baseline: Double
-    let time: Double
-    let durationMinutes: Double
-    let unit: DotUnit
-    var selection: Int? = nil
-    var windowOpacity: Double = 1
-    var provider = "codex"
-    private var accent: Color { provider == "claude" ? FlightDeck.amber : FlightDeck.cyan }
-    private var scale: DotScale { DotScale(unit: unit, durationMinutes: durationMinutes, index: selection ?? DotScale.defaultIndex(unit: unit, durationMinutes: durationMinutes)) }
-    var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack(spacing: 4) {
-                Image(systemName: "chevron.down").font(.system(size: 8))
-                Text(provider.capitalized).font(.system(size: 11, weight: .semibold))
-                Spacer(minLength: 0)
-                Image(systemName: "ellipsis").font(.system(size: 10))
-            }.frame(height: 20)
-            HStack(spacing: 2) {
-                Text(durationMinutes == 300 ? "Session" : "Weekly").font(.system(size: 10)).foregroundStyle(FlightDeck.muted)
-                Spacer(minLength: 0)
-                GeometryReader { geometry in
-                    ZStack(alignment: .leading) {
-                        Capsule().fill(accent.opacity(0.5)).frame(height: 2)
-                        Circle().fill(FlightDeck.ink).frame(width: 7, height: 7)
-                            .offset(x: (geometry.size.width - 7) * (windowOpacity - 0.3) / 0.7)
-                    }.frame(height: geometry.size.height)
-                }.frame(width: 36)
-            }.frame(height: 14)
-            HStack(alignment: .top, spacing: 6) {
-                VStack(spacing: 3) {
-                    VerticalComparison(remaining: remaining, baseline: baseline, scale: scale, color: accent, sampleTime: time).frame(height: 70)
-                    Text(scale.caption).font(.system(size: 8, design: .monospaced)).foregroundStyle(FlightDeck.muted).frame(height: 10)
-                }.frame(maxWidth: .infinity)
-                VStack(spacing: 4) {
-                    RemainingBar(remaining: remaining, color: accent)
-                    Image(systemName: "battery.0percent").font(.system(size: 9)).foregroundStyle(FlightDeck.muted).frame(height: 10)
-                }.frame(width: 12)
-                ResetBar(progress: baseline, expired: false, color: accent)
-            }.frame(height: 84)
-        }.padding(8).frame(width: 110, height: 148, alignment: .topLeading)
-            .background(FlightDeck.panel, in: RoundedRectangle(cornerRadius: 12))
-            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.white.opacity(0.14), lineWidth: 1))
-            .foregroundStyle(FlightDeck.ink).preferredColorScheme(.dark).opacity(windowOpacity)
+    let model: ScreenshotModel
+    let windowOpacity: Double
+    init(remaining: Double, baseline: Double, time: Double, durationMinutes: Double, unit: DotUnit,
+         selection: Int? = nil, windowOpacity: Double = 1, provider: String = "codex", scope: String? = nil) {
+        let model = ScreenshotModel()
+        model.configureSymbol(provider: provider, scope: scope, remaining: remaining, baseline: baseline,
+            durationMinutes: durationMinutes, unit: unit,
+            index: selection ?? DotScale.defaultIndex(unit: unit, durationMinutes: durationMinutes),
+            opacity: windowOpacity, time: time)
+        self.model = model; self.windowOpacity = windowOpacity
     }
+    var body: some View { MiniView(model: model).opacity(windowOpacity) }
 }
 
 struct DemoFrame: View {
@@ -61,17 +28,17 @@ struct DemoFrame: View {
             HStack(spacing: 28) {
                 example("Session", detail: "On pace", remaining: 50, baseline: 50 + 0.4 * cos(time), durationMinutes: 300, unit: .time)
                 example("Weekly", detail: "Ahead of budget", remaining: 44, baseline: 50 - time / 20, durationMinutes: 10080, unit: .time, provider: "claude")
-                example("pp mode", detail: "Reserve", remaining: 53, baseline: 50 - time / 20, durationMinutes: 10080, unit: .percentagePoints)
+                example("Fable", detail: "Model-scoped quota", remaining: 53, baseline: 50 - time / 20, durationMinutes: 10080, unit: .percentagePoints, provider: "claude", scope: "Fable")
             }.padding(.top, 22).frame(maxWidth: .infinity)
             Text("SYNTHETIC DATA  ·  Minutes, hours, or pp  ·  Motion accelerated")
                 .font(.system(size: 9, design: .monospaced)).foregroundStyle(FlightDeck.muted).padding(.top, 18)
         }.padding(26).frame(width: 600, height: 330, alignment: .topLeading)
             .background(FlightDeck.screen).environment(\.colorScheme, .dark)
     }
-    private func example(_ title: String, detail: String, remaining: Double, baseline: Double, durationMinutes: Double, unit: DotUnit, provider: String = "codex") -> some View {
+    private func example(_ title: String, detail: String, remaining: Double, baseline: Double, durationMinutes: Double, unit: DotUnit, provider: String = "codex", scope: String? = nil) -> some View {
         VStack(spacing: 8) {
             Text(title).font(.system(size: 13, weight: .medium)).foregroundStyle(FlightDeck.ink)
-            DemoMini(remaining: remaining, baseline: baseline, time: time, durationMinutes: durationMinutes, unit: unit, provider: provider)
+            DemoMini(remaining: remaining, baseline: baseline, time: time, durationMinutes: durationMinutes, unit: unit, provider: provider, scope: scope)
             Text(detail).font(.system(size: 10)).foregroundStyle(FlightDeck.muted)
         }.frame(maxWidth: .infinity)
     }
@@ -131,7 +98,7 @@ struct FeatureFrame: View {
     private func scaleExample(_ name: String, duration: Double, unit: DotUnit, choices: String) -> some View {
         VStack(spacing: 8) {
             Text(name).font(.system(size: 13, weight: .medium)).foregroundStyle(FlightDeck.ink)
-            DemoMini(remaining: 48, baseline: 50, time: time, durationMinutes: duration, unit: unit, selection: step)
+            DemoMini(remaining: 48, baseline: 50, time: time, durationMinutes: duration, unit: unit, selection: step, provider: duration == 300 ? "codex" : "claude", scope: unit == .percentagePoints ? "Fable" : nil)
             Text(choices).font(.system(size: 10)).foregroundStyle(FlightDeck.muted)
         }.frame(maxWidth: .infinity)
     }
@@ -176,6 +143,7 @@ struct FeatureFrame: View {
     @MainActor static func main() throws {
         let app = NSApplication.shared
         app.setActivationPolicy(.prohibited)
+        NSApp.appearance = NSAppearance(named: .darkAqua)
         let directory = URL(fileURLWithPath: CommandLine.arguments.dropFirst().first ?? "docs/demo.gif").deletingLastPathComponent()
         for scene in DemoScene.allCases {
             try render(scene: scene, output: directory.appendingPathComponent(scene.rawValue + ".gif"))
@@ -190,9 +158,8 @@ struct FeatureFrame: View {
         for frame in 0..<count {
             let time = Double(frame) * 0.2
             let content = scene == .overview ? AnyView(DemoFrame(time: time)) : AnyView(FeatureFrame(scene: scene, time: time))
-            let renderer = ImageRenderer(content: content)
-            renderer.scale = 2
-            guard let image = renderer.cgImage else { fatalError("Unable to render demo frame") }
+            let size = NSSize(width: 600, height: scene == .overview ? 330 : 390)
+            let image = DocumentationRenderer.image(content, size: size)
             CGImageDestinationAddImage(destination, image, [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFDelayTime: 0.2]] as CFDictionary)
             if frame == 0 || frame == 32 {
                 let previews = output.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("dist/demo-previews")
