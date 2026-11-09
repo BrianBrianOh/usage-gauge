@@ -137,19 +137,19 @@ final class DetentKnob: NSControl {
         }
         for i in labels.indices {
             let p = point(Double(i), radius: 50)
-            let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedSystemFont(ofSize: 10, weight: i == selection ? .bold : .medium), .foregroundColor: i == selection ? accent : NSColor(white: 0.72, alpha: 1)]
+            let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedSystemFont(ofSize: 10, weight: i == selection ? .medium : .regular), .foregroundColor: i == selection ? accent : NSColor(white: 0.72, alpha: 1)]
             let text = labels[i] as NSString, size = text.size(withAttributes: attributes)
             text.draw(at: NSPoint(x: p.x - size.width / 2, y: p.y - size.height / 2), withAttributes: attributes)
         }
         let knob = NSBezierPath(ovalIn: NSRect(x: c.x - 28, y: c.y - 28, width: 56, height: 56))
-        NSGradient(starting: NSColor(white: 0.29, alpha: 1), ending: NSColor(white: 0.12, alpha: 1))?.draw(in: knob, angle: 90)
+        NSColor(white: 0.10, alpha: 1).setFill(); knob.fill()
         NSColor(white: 0.4, alpha: 1).setStroke(); knob.lineWidth = 1; knob.stroke()
-        // A broad grip and luminous index recreate a detented cockpit selector.
+        // Flat selector face and a single index retain the calibrated detents.
         let a = angle(drawnPosition), dx = cos(a), dy = sin(a)
         let grip = NSBezierPath(); grip.move(to: NSPoint(x: c.x - dx * 18, y: c.y - dy * 18)); grip.line(to: NSPoint(x: c.x + dx * 21, y: c.y + dy * 21))
-        NSColor(white: 0.36, alpha: 1).setStroke(); grip.lineWidth = 10; grip.lineCapStyle = .round; grip.stroke()
+        NSColor(white: 0.36, alpha: 1).setStroke(); grip.lineWidth = 6; grip.lineCapStyle = .butt; grip.stroke()
         let needle = NSBezierPath(); needle.move(to: point(drawnPosition, radius: 9)); needle.line(to: point(drawnPosition, radius: 24))
-        accent.setStroke(); needle.lineWidth = 3; needle.lineCapStyle = .round; needle.stroke()
+        accent.setStroke(); needle.lineWidth = 2; needle.lineCapStyle = .butt; needle.stroke()
         if window?.firstResponder === self {
             accent.withAlphaComponent(0.55).setStroke()
             let ring = NSBezierPath(ovalIn: NSRect(x: c.x - 32, y: c.y - 32, width: 64, height: 64)); ring.lineWidth = 1; ring.stroke()
@@ -176,9 +176,9 @@ struct InstrumentPanel: View {
     }
     private func selector(title: String, subtitle: String, labels: [String], selection: Binding<Int>) -> some View {
         VStack(spacing: 0) {
-            Text(title).font(FlightDeck.label(9)).tracking(0.3).foregroundStyle(FlightDeck.ink)
+            Text(title.uppercased()).font(FlightDeck.label(9)).tracking(0.3).foregroundStyle(FlightDeck.ink)
             RotaryDial(title: title, labels: labels, selection: selection, accent: model.accent).frame(height: 108)
-            Text(subtitle).font(FlightDeck.label(8)).tracking(0.5).foregroundStyle(model.accent)
+            Text(subtitle.uppercased()).font(FlightDeck.label(8)).tracking(0.5).foregroundStyle(model.accent)
         }.frame(maxWidth: .infinity)
     }
 }

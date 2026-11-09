@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import selectors
@@ -11,6 +12,12 @@ import subprocess
 import time
 
 ROOT = Path(__file__).resolve().parent
+
+
+class UsageReadError(RuntimeError):
+    def __init__(self, code, message):
+        super().__init__(message)
+        self.code = code
 
 
 def read_account_limits(timeout=25):
@@ -65,6 +72,8 @@ def read_account_limits(timeout=25):
                     send({'id': 3, 'method': 'account/rateLimits/read'})
                 elif message.get('id') == 2:
                     account = message.get('result', {}).get('account') or {}
+                    if not account:
+                        raise UsageReadError('auth_required', 'Sign in to Codex to read subscription usage.')
                 elif message.get('id') == 3:
                     limits = message.get('result', {})
                 if account is not None and limits is not None:
@@ -87,6 +96,7 @@ def normalize(raw, now, account_key):
         legacy = raw.get('rateLimits')
         buckets = {legacy.get('limitId') or 'codex': legacy} if isinstance(legacy, dict) else {}
     windows = []
+    invalid = False
     for bucket_id, bucket in buckets.items():
         if not isinstance(bucket, dict):
             continue
@@ -96,16 +106,18 @@ def normalize(raw, now, account_key):
                 continue
             used, duration, reset = [window.get(k) for k in ('usedPercent', 'windowDurationMins', 'resetsAt')]
             if not all(isinstance(v, (float, int)) and not isinstance(v, bool) for v in (used, duration, reset)):
+                invalid = True
                 continue
-            if duration <= 0 or reset <= 0:
+            if not all(math.isfinite(v) for v in (used, duration, reset)) or duration <= 0 or reset <= 0:
+                invalid = True
                 continue
             windows.append({'id': bucket_id + ':' + slot,
                             'name': bucket.get('limitName') or bucket_id,
                             'durationMinutes': duration, 'resetAt': reset,
                             'remaining': max(0, min(100, 100 - used)), 'observedAt': now})
     if not windows:
-        raise RuntimeError('No subscription usage limits are available.')
-    return {'accountKey': account_key, 'fetchedAt': now, 'windows': windows, 'error': None}
+        raise UsageReadError('invalid_data' if invalid else 'no_limits', 'Invalid subscription usage data.' if invalid else 'No subscription usage limits are available.')
+    return {'accountKey': account_key, 'fetchedAt': now, 'windows': windows, 'error': None, 'errorCode': None}
 
 
 def merge(state, fresh):
@@ -151,6 +163,7 @@ def main():
         print(json.dumps({'ok': True, 'windows': [{k:v for k,v in w.items() if k != 'points'} for w in result['windows']]}))
     except Exception as error:
         state['error'] = str(error)
+        state['errorCode'] = getattr(error, 'code', 'unavailable')
         state['attemptedAt'] = time.time()
         save(path, state)
         print(json.dumps({'ok': False, 'error': str(error)}, ensure_ascii=False))

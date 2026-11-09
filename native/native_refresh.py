@@ -37,6 +37,7 @@ def main():
             return 0
         except Exception as error:
             state['error'] = str(error)
+            state['errorCode'] = getattr(error, 'code', 'unavailable')
             state['attemptedAt'] = time.time()
             save(path, state)
             save(args.state_dir / 'last-refresh.json', {'ok': False, 'attemptedAt': state['attemptedAt'], 'error': str(error)})

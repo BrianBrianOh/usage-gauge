@@ -40,6 +40,23 @@ The cockpit influence is in the interaction, too. Your diamond stays fixed while
 
 ## Feature demos
 
+**Head-down MFD and data validity.** Normal mode uses flat panels, restrained borders, monospaced instrument labels, white measurements and cyan selections/references. Amber and red carry caution and critical meanings rather than service branding. Missing readings retain their instrument positions with **N/A** and static diagonal hatching in both normal and HUD modes.
+
+![Normal numeric mini and green HUD transitioning through wait, sign-in, unavailable, stale, expired, invalid, idle and valid data states](docs/data-validity.gif)
+
+| Flag | Meaning |
+| --- | --- |
+| AUTH | Confirmed sign-in required; cached account values are hidden. |
+| WAIT | Waiting for a first observation. |
+| DATA / INVALID | A reading is unavailable or malformed. |
+| STALE / RESET | Only explicitly marked LAST observations remain; live baseline, pace, reset countdown and forecast are inhibited. |
+| IDLE | Usage is known, but the window has not started; baseline and time are N/A. |
+| N/A | The account has no supported meters, or the specific field does not apply. |
+
+A real **0%** stays a measured zero. Missing data never becomes an empty quota bar, a centered pace diamond, or a running countdown. Menu-bar readings also use N/A for unavailable or stale meters. A successful read restores the instruments automatically. Forecasts and history independently show N/A when there are insufficient observations.
+
+The [v0.4 design notes](docs/design-v0.4.md) record the public human-engineering references, design interpretation and state contract. This is an aviation-inspired desktop display, not a certified military instrument.
+
 **Transparent HUD.** Green instruments in numeric and symbol modes. Each letter, digit, symbol, and bar selects one readable green tone from the actual pixels behind its ink. Controls appear on hover; the hollow diamond blinks off and on for a pace warning. The app stays in the menu bar without a Dock icon.
 
 ![Numeric and symbol HUD modes with a moving light background, independent green contrast, hover controls, and hollow diamond warnings](docs/hud.gif)
@@ -52,7 +69,7 @@ The cockpit influence is in the interaction, too. Your diamond stays fixed while
 
 **Budget warning.** The center stays fixed while the white reference moves. At the upper limit, the diamond switches directly between red and the service color.
 
-![Claude mode: moving budget reference and red/amber warning](docs/warning.gif)
+![Moving budget reference and red/cyan warning](docs/warning.gif)
 
 **Dragging and opacity.** Move the compact instrument by dragging the dot area or bottom label. Use the small slider beside the limit name to adjust opacity.
 
@@ -170,8 +187,9 @@ python3 tools/check_publication.py
 zsh tools/generate-demo.sh
 zsh tools/generate-hud-demo.sh
 zsh tools/generate-screenshots.sh
+zsh tools/generate-validity-screenshots.sh
 ```
 
-The tests cover account/cycle isolation, Claude retry and account-switch handling, quota parsing, forecasts, time and vertical scales, mini-window placement, time-budget conversion, dot spacing, warning boundaries, binary warning timing, and HUD ink masks. Documentation generators host the actual app views off screen with the same compile-time in-memory model and native controls. GIFs use a fixed animation sample time for the binary warning. The HUD generator also verifies quarter-tick alignment and uses the shipping contrast classifier on synthetic background pixels. Stills include full, numeric mini, and symbol windows, with Claude session, weekly, and Fable examples. Generators do not capture the desktop, load preferences, read accounts, or start collectors.
+The tests cover account/cycle isolation, typed auth failures and recovery, Claude retry and account-switch handling, quota parsing, forecasts, time and vertical scales, mini-window placement, time-budget conversion, dot spacing, warning boundaries, binary warning timing, menu-bar label fit and HUD ink masks. The validity renderer checks 90 provider/state/layout combinations, plus real zero/full readings, inhibited indications, quarter ticks and complete-entity HUD contrast. Documentation generators host the actual app views off screen with the same compile-time in-memory model and native controls. GIFs use a fixed animation sample time for the binary warning. The HUD generator also uses the shipping contrast classifier on synthetic background pixels. Generators do not capture the desktop, load preferences, read accounts, or start collectors.
 
 Licensed under [MIT](LICENSE).

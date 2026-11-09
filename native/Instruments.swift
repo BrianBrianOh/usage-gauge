@@ -8,21 +8,20 @@ enum FlightDeck {
     static let ink = Color(red: 0.88, green: 0.92, blue: 0.90)
     static let muted = Color(red: 0.53, green: 0.61, blue: 0.63)
     static let cyan = Color(red: 0.36, green: 0.91, blue: 0.89)
-    static let amber = Color(red: 1, green: 0.70, blue: 0.35)
+    static let amber = Color(red: 1, green: 0.76, blue: 0.25)
     static let green = Color(red: 0.59, green: 0.88, blue: 0.59)
-    static let forecast = Color(red: 0.81, green: 0.65, blue: 0.94)
-    static let caution = Color(red: 1, green: 0.86, blue: 0.36)
+    static let forecast = cyan
+    static let caution = amber
     static let alert = Color(red: 1, green: 0.42, blue: 0.38)
-    static func label(_ size: CGFloat = 10) -> Font { .system(size: size, weight: .medium, design: .monospaced) }
+    static func label(_ size: CGFloat = 10) -> Font { .system(size: size, weight: .regular, design: .monospaced) }
 }
 
 struct Bezel: ViewModifier {
     var hardware: Bool = false
     func body(content: Content) -> some View {
         content
-            .background(hardware ? FlightDeck.panel : FlightDeck.screen, in: RoundedRectangle(cornerRadius: 7))
-            .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(.white.opacity(hardware ? 0.11 : 0.065), lineWidth: 1))
-            .shadow(color: .black.opacity(0.45), radius: 2, x: 0, y: 2)
+            .background(hardware ? FlightDeck.panel : FlightDeck.screen, in: RoundedRectangle(cornerRadius: 2))
+            .overlay(RoundedRectangle(cornerRadius: 2).strokeBorder(FlightDeck.muted.opacity(0.28), lineWidth: 1))
 
     }
 }
@@ -35,9 +34,8 @@ struct PanelButton: ButtonStyle {
             .font(FlightDeck.label(10))
             .foregroundStyle(active ? accent : FlightDeck.ink)
             .padding(.horizontal, 12).padding(.vertical, 8)
-            .background(LinearGradient(colors: configuration.isPressed ? [Color.black.opacity(0.4), Color.black.opacity(0.1)] : [.white.opacity(active ? 0.07 : 0.05), .black.opacity(0.08)], startPoint: .top, endPoint: .bottom), in: RoundedRectangle(cornerRadius: 4))
-            .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(active ? accent.opacity(0.65) : .white.opacity(0.14), lineWidth: 1))
-            .shadow(color: .black.opacity(configuration.isPressed ? 0 : 0.35), radius: 1, y: 2)
+            .background(configuration.isPressed ? accent.opacity(0.14) : FlightDeck.panel, in: RoundedRectangle(cornerRadius: 2))
+            .overlay(RoundedRectangle(cornerRadius: 2).strokeBorder(active ? accent.opacity(0.85) : FlightDeck.muted.opacity(0.3), lineWidth: 1))
     }
 }
 
@@ -55,6 +53,7 @@ struct Annunciator: View {
 struct ReserveDial: View {
     let remaining: Double
     let accent: Color
+    var caption = "REMAINING"
     var body: some View {
         ZStack {
             Canvas { context, size in
@@ -66,11 +65,11 @@ struct ReserveDial: View {
                 }
                 var track = Path()
                 track.addArc(center: c, radius: radius, startAngle: .degrees(135), endAngle: .degrees(405), clockwise: false)
-                context.stroke(track, with: .color(accent.opacity(0.12)), style: StrokeStyle(lineWidth: 4, lineCap: .round))
+                context.stroke(track, with: .color(accent.opacity(0.12)), style: StrokeStyle(lineWidth: 2, lineCap: .butt))
                 if remaining > 0 {
                     var fill = Path()
                     fill.addArc(center: c, radius: radius, startAngle: .degrees(135), endAngle: .degrees(135 + remaining / 100 * 270), clockwise: false)
-                    context.stroke(fill, with: .color(accent), style: StrokeStyle(lineWidth: 4, lineCap: .round))
+                    context.stroke(fill, with: .color(accent), style: StrokeStyle(lineWidth: 2, lineCap: .butt))
                 }
                 for i in 0...40 {
                     let f = Double(i) / 40
@@ -84,8 +83,8 @@ struct ReserveDial: View {
                 context.fill(Path(ellipseIn: CGRect(x: p.x - 2.5, y: p.y - 2.5, width: 5, height: 5)), with: .color(.white))
             }.accessibilityHidden(true)
             VStack(spacing: 1) {
-                Text(Formats.percent(remaining)).font(.system(size: 30, weight: .medium, design: .monospaced)).tracking(-1).foregroundStyle(accent)
-                Text("Remaining").font(FlightDeck.label(8)).tracking(0.2).foregroundStyle(FlightDeck.muted)
+                Text(Formats.percent(remaining)).font(.system(size: 30, weight: .regular, design: .monospaced)).tracking(0).foregroundStyle(FlightDeck.ink)
+                Text(caption).font(FlightDeck.label(8)).tracking(0.2).foregroundStyle(FlightDeck.muted)
             }.offset(y: 3)
         }.frame(width: 134, height: 134)
         .accessibilityElement(children: .ignore)

@@ -18,6 +18,10 @@ class UsageUnavailable(RuntimeError):
     """A temporary transport or service failure, eligible for one bounded retry."""
 
 
+class AuthenticationRequired(RuntimeError):
+    code = 'auth_required'
+
+
 def find_claude():
     found = shutil.which('claude')
     if found:
@@ -102,7 +106,7 @@ def read_usage(cwd, timeout=30):
 def collect_usage(cwd, attempts=2):
     account = organization()
     if not account:
-        raise RuntimeError('Claude Code account is unknown. Run claude and sign in.')
+        raise AuthenticationRequired('Claude Code account is unknown. Run claude and sign in.')
     for attempt in range(attempts):
         try:
             result = read_usage(cwd)
@@ -127,7 +131,7 @@ def main():
         print(json.dumps(collect_usage(args.cwd)))
         return 0
     except Exception as error:
-        print(json.dumps({'ok': False, 'error': str(error)}))
+        print(json.dumps({'ok': False, 'error': str(error), 'errorCode': getattr(error, 'code', 'unavailable')}))
         return 1
 
 

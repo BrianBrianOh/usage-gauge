@@ -147,6 +147,7 @@ enum ClaudeCLI {
     enum Outcome {
         case reading(organization: String, plan: String?, usage: [String: Any])
         case failure(String)
+        case authenticationRequired(String)
     }
     @MainActor static func read(directory: URL, completion: @escaping @MainActor (Outcome) -> Void) {
         guard let helper = Bundle.main.url(forResource: "claude_usage", withExtension: "py") else {
@@ -177,7 +178,10 @@ enum ClaudeCLI {
         guard let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
             return .failure("Claude Code returned no usage data.")
         }
-        guard object["ok"] as? Bool == true else { return .failure(object["error"] as? String ?? "Unable to read Claude usage.") }
+        guard object["ok"] as? Bool == true else {
+            let message = object["error"] as? String ?? "Unable to read Claude usage."
+            return object["errorCode"] as? String == "auth_required" ? .authenticationRequired(message) : .failure(message)
+        }
         guard let usage = object["usage"] as? [String: Any], let organization = object["organization"] as? String,
               (8...100).contains(organization.count) else { return .failure("Claude Code returned incomplete usage data.") }
         return .reading(organization: organization, plan: object["plan"] as? String, usage: usage)
@@ -220,6 +224,7 @@ struct ClaudeReadState {
     private var hasLoaded = false
     private var state = ClaudeReadState()
     private var previous = Snapshot()
+    private var cliNeedsAuthentication = false
     private var timeout: DispatchWorkItem?
     private let usagePage = URL(string: "https://claude.ai/settings/usage")!
 
@@ -294,6 +299,7 @@ struct ClaudeReadState {
         guard state.begin(now: Date().timeIntervalSince1970) else { return }
         timeout?.cancel()
         let read = state.generation
+        cliNeedsAuthentication = false
         ClaudeCLI.read(directory: directory) { [weak self] outcome in
             guard let self, self.state.isCurrent(read) else { return }
             switch outcome {
@@ -303,12 +309,15 @@ struct ClaudeReadState {
                 }
             case .failure(let message):
                 self.refreshWeb(fallback: message, read: read)
+            case .authenticationRequired(let message):
+                self.cliNeedsAuthentication = true
+                self.refreshWeb(fallback: message, read: read, code: "auth_required")
             }
         }
     }
-    private func refreshWeb(fallback message: String, read: Int) {
+    private func refreshWeb(fallback message: String, read: Int, code: String = "unavailable") {
         let connected = hasLoaded || UserDefaults.standard.bool(forKey: "claudeWebConnected") || previous.source == "claude.ai" || (previous.source == nil && !previous.windows.isEmpty)
-        guard connected else { report(message); return }
+        guard connected else { report(message, code: code); return }
         state.fallBackToWeb()
         if !hasLoaded {
             hasLoaded = true; webView.load(URLRequest(url: usagePage))
@@ -321,6 +330,7 @@ struct ClaudeReadState {
         timeout?.cancel()
         let work = DispatchWorkItem { [weak self] in
             guard let self, self.state.awaitingWeb, self.state.isCurrent(read) else { return }
+            // A timed-out web fallback is not proof that every available connection is signed out.
             self.report(message + " The web connection did not respond either; open Account to reconnect.")
         }
         timeout = work; DispatchQueue.main.asyncAfter(deadline: .now() + 25, execute: work)
@@ -355,12 +365,15 @@ struct ClaudeReadState {
     private func persist(_ snapshot: Snapshot) {
         if let data = try? JSONEncoder().encode(snapshot) { try? data.write(to: directory.appendingPathComponent("claude-state.json"), options: .atomic) }
     }
-    private func report(_ message: String) {
+    private func report(_ message: String, code: String = "unavailable") {
         timeout?.cancel(); state.finish()
-        var value = previous; value.error = message
+        var value = previous; value.error = message; value.errorCode = code
         previous = value; persist(value); onUpdate(value)
     }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        if state.awaitingWeb, cliNeedsAuthentication, webView.url?.host == "claude.ai", webView.url?.path.hasPrefix("/login") == true {
+            report("Sign in to Claude Code or reconnect the Claude account.", code: "auth_required"); return
+        }
         if webView.url?.host == "claude.ai", ["/new", "/chats", "/"].contains(webView.url?.path ?? "") {
             webView.load(URLRequest(url: usagePage))
         }

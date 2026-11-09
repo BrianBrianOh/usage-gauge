@@ -39,9 +39,9 @@ import UniformTypeIdentifiers
     var headline: Quota? { quota }
     var displayStep: Double { GaugeScale.steps[stepIndex] }
     var miniDotScale: DotScale { DotScale(unit: miniDotUnit, durationMinutes: quota?.durationMinutes ?? 300, index: miniDotIndex) }
-    var accent: Color { provider == "claude" ? FlightDeck.amber : FlightDeck.cyan }
-    var error: String? { nil }
-    var isRefreshing: Bool { false }
+    var accent: Color { FlightDeck.cyan }
+    var error: String? { activeSnapshot.error }
+    @Published var isRefreshing = false
     var sourceLabel: String { provider == "claude" ? "Claude Code" : "Account" }
     func start() { fatalError("Collectors are disabled in documentation builds") }
     func refresh() { fatalError("Collectors are disabled in documentation builds") }
@@ -135,5 +135,33 @@ private final class DocumentationWindow: NSWindow {
         }
         CGImageDestinationAddImage(destination, image, nil)
         guard CGImageDestinationFinalize(destination) else { fatalError("Unable to save documentation PNG") }
+    }
+}
+
+@MainActor extension ScreenshotModel {
+    static func validityFixture(condition: DataCondition, provider: String) -> ScreenshotModel {
+        let model = ScreenshotModel(), now = Date().timeIntervalSince1970
+        model.provider = provider; model.selectedID = provider == "codex" ? "codex:primary" : "claude:seven_day"
+        var snapshot = model.activeSnapshot
+        let original = model.quota!
+        func replace(remaining: Double? = nil, observed: Double? = nil, reset: Double? = nil, idle: Bool? = nil) {
+            let value = Quota(id: original.id, name: original.name, durationMinutes: original.durationMinutes,
+                resetAt: reset ?? original.resetAt, remaining: remaining ?? original.remaining, observedAt: observed ?? original.observedAt,
+                points: original.points, severity: original.severity, idle: idle)
+            snapshot.windows = [value]
+        }
+        switch condition {
+        case .live: break
+        case .idle: replace(remaining: 100, idle: true)
+        case .loading: snapshot = Snapshot(); model.isRefreshing = true
+        case .authentication: snapshot.error = "Synthetic sign-in required"; snapshot.errorCode = "auth_required"
+        case .noLimits: snapshot = Snapshot(); snapshot.fetchedAt = now; snapshot.errorCode = "no_limits"
+        case .unavailable: snapshot = Snapshot(); snapshot.error = "Synthetic temporary read failure"; snapshot.errorCode = "unavailable"
+        case .stale: replace(observed: now - 1200)
+        case .resetPending: replace(observed: now - 120, reset: now - 10)
+        case .invalid: replace(remaining: 101)
+        }
+        if provider == "codex" { model.snapshot = snapshot } else { model.claudeSnapshot = snapshot }
+        return model
     }
 }

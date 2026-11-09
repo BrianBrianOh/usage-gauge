@@ -45,13 +45,14 @@ struct DemoFrame: View {
 }
 
 enum DemoScene: String, CaseIterable {
-    case overview = "demo", scales, warning, opacity
+    case overview = "demo", scales, warning, opacity, validity = "data-validity"
     var title: String {
         switch self {
         case .overview: return "Usage Gauge"
         case .scales: return "Time or percentage points"
         case .warning: return "Budget warning"
         case .opacity: return "Dragging and opacity"
+        case .validity: return "Data validity"
         }
     }
 }
@@ -70,10 +71,11 @@ struct FeatureFrame: View {
                 case .scales: scales
                 case .warning: warning
                 case .opacity: desktop
+                case .validity: validity
                 case .overview: EmptyView()
                 }
-            }.frame(height: 206).padding(.top, 22)
-        }.padding(26).frame(width: 600, height: 390, alignment: .topLeading)
+            }.frame(height: scene == .validity ? 270 : 206).padding(.top, 22)
+        }.padding(26).frame(width: 600, height: scene == .validity ? 450 : 390, alignment: .topLeading)
             .background(FlightDeck.screen)
             .overlay(alignment: .bottomLeading) {
                 Text("SYNTHETIC DATA  ·  Rendered feature demonstration")
@@ -85,6 +87,7 @@ struct FeatureFrame: View {
         case .scales: return "Scroll over the scale, or click to select an interval"
         case .warning: return "The reference rises as consumption gets ahead of the linear budget"
         case .opacity: return "Drag the instrument or its label · Adjust opacity beside the limit name"
+        case .validity: return "N/A and static hatching distinguish missing data from a real zero"
         case .overview: return ""
         }
     }
@@ -93,6 +96,21 @@ struct FeatureFrame: View {
             scaleExample("Session", duration: 300, unit: .time, choices: "5 → 10 → 15 minutes")
             scaleExample("Weekly", duration: 10080, unit: .time, choices: "2h · 4h · 8h\n1d · 2d · 4d")
             scaleExample("pp mode", duration: 10080, unit: .percentagePoints, choices: "1 → 2 → 5 pp")
+        }
+    }
+    private var validity: some View {
+        let states: [DataCondition] = [.loading, .authentication, .noLimits, .unavailable, .stale, .resetPending, .invalid, .idle, .live]
+        let condition = states[min(states.count - 1, Int(time / 1.6))]
+        let numeric = ScreenshotModel.validityFixture(condition: condition, provider: "codex")
+        let hud = ScreenshotModel.validityFixture(condition: condition, provider: "codex")
+        numeric.stepIndex = 4; hud.stepIndex = 4; hud.miniHUD = true; hud.miniSymbols = true
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .center, spacing: 36) {
+                MiniView(model: numeric).frame(width: 320, height: 228)
+                MiniView(model: hud).frame(width: 110, height: 148)
+            }.frame(maxWidth: .infinity)
+            Text(condition.token + " / " + condition.detail).font(FlightDeck.label(9)).foregroundStyle(FlightDeck.muted)
+                .lineLimit(2).frame(height: 26, alignment: .topLeading)
         }
     }
     private func scaleExample(_ name: String, duration: Double, unit: DotUnit, choices: String) -> some View {
@@ -152,7 +170,7 @@ struct FeatureFrame: View {
         }
     }
     @MainActor private static func render(scene: DemoScene, output: URL) throws {
-        let count = 48
+        let count = scene == .validity ? 72 : 48
         guard let destination = CGImageDestinationCreateWithURL(output as CFURL, UTType.gif.identifier as CFString, count, nil) else {
             fatalError("Unable to create GIF")
         }
@@ -160,7 +178,7 @@ struct FeatureFrame: View {
         for frame in 0..<count {
             let time = Double(frame) * 0.2
             let content = scene == .overview ? AnyView(DemoFrame(time: time)) : AnyView(FeatureFrame(scene: scene, time: time))
-            let size = NSSize(width: 600, height: scene == .overview ? 330 : 390)
+            let size = NSSize(width: 600, height: scene == .overview ? 330 : scene == .validity ? 450 : 390)
             let image = DocumentationRenderer.image(content, size: size)
             CGImageDestinationAddImage(destination, image, [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFDelayTime: 0.2]] as CFDictionary)
             if frame == 0 || frame == 32 {

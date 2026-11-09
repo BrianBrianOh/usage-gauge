@@ -38,6 +38,7 @@ enum HUDServiceHealth: Int {
 
 struct HUDServiceMark: View {
     let health: HUDServiceHealth
+    var color = MiniPalette.hudGreen
     var body: some View {
         ZStack {
             switch health {
@@ -46,7 +47,7 @@ struct HUDServiceMark: View {
             case .warning: Rectangle().strokeBorder(lineWidth: HUDStyle.stroke).frame(width: 5, height: 5)
             case .critical: Rectangle().frame(width: 5, height: 5)
             }
-        }.foregroundStyle(MiniPalette.hudGreen).frame(width: 5, height: 5)
+        }.foregroundStyle(color).frame(width: 5, height: 5)
             .accessibilityLabel(health.label)
     }
 }
@@ -79,7 +80,7 @@ private struct HUDUnitRects: PreferenceKey {
     static let defaultValue: [HUDContrastUnit] = []
     static func reduce(value: inout [HUDContrastUnit], nextValue: () -> [HUDContrastUnit]) { value.append(contentsOf: nextValue()) }
 }
-private extension View {
+extension View {
     func hudUnit(_ id: String, revision: Int = 0, stencil: HUDInkStencil = .rendered, layer: Int = 0) -> some View {
         anchorPreference(key: HUDUnitAnchors.self, value: .bounds) { [id: HUDUnitAnchor(anchor: $0, text: nil, revision: revision, stencil: stencil, layer: layer)] }
     }
@@ -286,33 +287,26 @@ struct MiniView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: model.miniSymbols ? 5 : 7) {
             header
-            if let quota = model.quota {
+            let validity = model.availability(now: Date().timeIntervalSince1970)
+            if let quota = model.quota, validity.condition.permitsObservation {
                 limitSelector(quota)
                 TimelineView(.periodic(from: .now, by: model.displayStep)) { context in
                     if model.miniSymbols { symbols(quota, now: context.date) }
                     else { readings(quota, now: context.date) }
                 }.id(model.stepIndex)
             } else {
-                Spacer(minLength: 0)
-                let title = model.miniHUD ? (model.isRefreshing ? "LOADING" : "NO DATA") : (model.isRefreshing ? "Loading usage…" : "No usage data")
-                Text(title).font(.system(size: model.miniHUD ? 11 : 15, design: model.miniHUD ? .monospaced : .default)).foregroundStyle(palette.ink)
-                    .hudTextUnit("empty-title", title, size: model.miniHUD ? 11 : 15, design: model.miniHUD ? .monospaced : .system)
-                if model.provider == "claude" && !model.isRefreshing {
-                    Button(model.miniHUD ? "CONNECT CLAUDE" : "Connect Claude", action: model.connectClaude)
-                        .font(.system(size: model.miniHUD ? 10 : 13, design: model.miniHUD ? .monospaced : .default))
-                        .buttonStyle(.plain).foregroundStyle(palette.tint(model.accent))
-                        .hudTextUnit("connect", model.miniHUD ? "CONNECT CLAUDE" : "Connect Claude", size: model.miniHUD ? 10 : 13, design: model.miniHUD ? .monospaced : .system)
-                }
-                let detail = model.error ?? (model.miniHUD ? "OPEN FULL WINDOW FOR ACCOUNT DETAILS." : "Open the full window for account details.")
-                Text(detail).font(.system(size: 10, design: model.miniHUD ? .monospaced : .default)).foregroundStyle(palette.muted).lineLimit(2)
-                    .hudTextUnit("empty-detail", detail, size: 10, design: model.miniHUD ? .monospaced : .system, maxLines: 2)
-                Spacer(minLength: 0)
+                HStack {
+                    DataFlag(condition: validity.condition, hud: model.miniHUD, compact: true).hudUnit("data-flag")
+                    Spacer(minLength: 0)
+                }.frame(height: 14)
+                if model.miniSymbols { unavailableSymbols(validity.condition) }
+                else { unavailableReadings(validity.condition) }
             }
         }.padding(model.miniSymbols ? 8 : 12)
             .frame(width: MiniLayout.size(symbols: model.miniSymbols).width, height: MiniLayout.size(symbols: model.miniSymbols).height, alignment: .topLeading)
-            .background(palette.panel, in: RoundedRectangle(cornerRadius: 12))
-            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(palette.border, lineWidth: 1))
-            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .background(palette.panel, in: RoundedRectangle(cornerRadius: 3))
+            .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(palette.border, lineWidth: 1))
+            .clipShape(RoundedRectangle(cornerRadius: 3))
             .foregroundStyle(palette.ink)
             .environment(\.miniPalette, palette)
             .overlay {
@@ -362,7 +356,7 @@ struct MiniView: View {
                         Text("Claude").tag("claude")
                     }.pickerStyle(.inline)
                 } label: {
-                    Text(model.provider.capitalized).font(.system(size: 11, weight: .semibold))
+                    Text(model.provider.uppercased()).font(FlightDeck.label(10))
                         .foregroundStyle(palette.tint(model.accent))
                 }.menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().accessibilityLabel("Service").hudUnit("service")
                 }
@@ -373,7 +367,8 @@ struct MiniView: View {
                     HUDServiceMark(health: health).help("\(other.capitalized): \(health.label)")
                         .hudUnit("service-risk", revision: health.rawValue)
                 } else {
-                    RiskDot(risk: risk(of: other)).help(risk(of: other).map { "\(other.capitalized): \($0.label)" } ?? "")
+                    HUDServiceMark(health: hudHealth(of: other), color: risk(of: other)?.color ?? palette.muted)
+                        .help("\(other.capitalized): \(hudHealth(of: other).label)")
                 }
             } else {
                 ForEach(["codex", "claude"], id: \.self) { provider in
@@ -389,9 +384,12 @@ struct MiniView: View {
                         }
                     } else {
                     Button { model.provider = provider } label: {
-                        HStack(spacing: 3) { Text(provider.capitalized); RiskDot(risk: risk(of: provider), tint: model.miniHUD ? palette.ink : nil) }
+                        HStack(spacing: 3) {
+                            Text(provider.uppercased())
+                            HUDServiceMark(health: hudHealth(of: provider), color: risk(of: provider)?.color ?? palette.muted)
+                        }
                     }
-                        .buttonStyle(.plain).font(.system(size: 11, weight: model.provider == provider ? .semibold : .regular))
+                        .buttonStyle(.plain).font(FlightDeck.label(10))
                         .foregroundStyle(model.provider == provider ? palette.tint(model.accent) : palette.muted)
                         .accessibilityAddTraits(model.provider == provider ? .isSelected : [])
                         .hudUnit("service-\(provider)")
@@ -485,7 +483,7 @@ struct MiniView: View {
         }.buttonStyle(.plain).font(.system(size: 11)).frame(height: 20)
     }
     @ViewBuilder private func limitSelector(_ quota: Quota) -> some View {
-        let title = model.miniHUD ? hudLimitTitle(quota) : model.miniSymbols ? symbolTitle(quota, compact: true) : quota.title
+        let title = hudLimitTitle(quota)
         HStack(spacing: 2) {
             if model.activeSnapshot.windows.count > 1 {
                 Menu {
@@ -495,7 +493,7 @@ struct MiniView: View {
                 } label: {
                     HStack(spacing: 3) {
                         Text(title)
-                            .font(.system(size: 10, design: model.miniHUD ? .monospaced : .default))
+                            .font(.system(size: 10, design: .monospaced))
                             .foregroundStyle(palette.muted)
                             .lineLimit(1).fixedSize(horizontal: model.miniSymbols, vertical: false)
                         if !model.miniSymbols {
@@ -508,10 +506,10 @@ struct MiniView: View {
                     .accessibilityLabel("Limit").accessibilityValue(symbolTitle(quota))
                     .help("Select limit: \(symbolTitle(quota))")
                     .hudHitArea(model.miniHUD)
-                    .hudTextUnit("limit", title, size: 10, design: model.miniHUD ? .monospaced : .system,
+                    .hudTextUnit("limit", title, size: 10, design: .monospaced,
                         trailingSymbol: model.miniSymbols ? nil : "⌄")
-            } else { Text(title).font(.system(size: 10, design: model.miniHUD ? .monospaced : .default))
-                .hudTextUnit("limit", title, size: 10, design: model.miniHUD ? .monospaced : .system) }
+            } else { Text(title).font(.system(size: 10, design: .monospaced))
+                .hudTextUnit("limit", title, size: 10, design: .monospaced) }
             if let constraint = model.activeSnapshot.sharedConstraints(for: quota, now: Date().timeIntervalSince1970).first {
                 Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 9)).frame(width: model.miniSymbols ? 9 : nil).foregroundStyle(palette.tint(constraint.risk.color))
                     .help("\(constraint.quota.title): \(Formats.percent(constraint.quota.remaining)) left · \(constraint.risk.label). It counts all usage, so it can stop work before this limit does.")
@@ -530,8 +528,8 @@ struct MiniView: View {
             } else if model.isRefreshing {
                 if model.miniSymbols { Image(systemName: "arrow.triangle.2.circlepath").font(.system(size: 8)).frame(width: 9).help("Updating…").hudUnit("refreshing") }
                 else { Text(model.miniHUD ? "UPD" : "Updating…")
-                    .font(.system(size: 10, design: model.miniHUD ? .monospaced : .default))
-                    .hudTextUnit("refreshing", model.miniHUD ? "UPD" : "Updating…", size: 10, design: model.miniHUD ? .monospaced : .system) }
+                    .font(.system(size: 10, design: .monospaced))
+                    .hudTextUnit("refreshing", model.miniHUD ? "UPD" : "Updating…", size: 10, design: .monospaced) }
             }
             Group {
                 if model.miniHUD {
@@ -549,14 +547,64 @@ struct MiniView: View {
                 .hudHitArea(model.miniHUD)
         }.font(.system(size: 10)).foregroundStyle(palette.muted).frame(height: 14)
     }
+    private func unavailableComparison(_ condition: DataCondition) -> some View {
+        VStack(spacing: 5) {
+            Spacer(minLength: 0)
+            Text("N/A").font(FlightDeck.label(10)).foregroundStyle(palette.hud ? palette.ink : FlightDeck.caution)
+                .hudTextUnit("pace-na", "N/A", size: 10, design: .monospaced)
+            BarberPole(color: palette.hud ? palette.ink : FlightDeck.caution).frame(width: 28, height: 5).hudUnit("pace-invalid-tape")
+            Spacer(minLength: 0)
+        }.frame(maxWidth: .infinity).help(condition.detail).accessibilityLabel("Pace N/A. " + condition.detail)
+    }
+    private func unavailableSymbols(_ condition: DataCondition) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            VStack(spacing: -2) {
+                unavailableComparison(condition).frame(height: 70)
+                Text("N/A").font(FlightDeck.label(8)).foregroundStyle(palette.muted).frame(height: 10)
+                    .hudTextUnit("scale-na", "N/A", size: 8, design: .monospaced)
+            }.frame(maxWidth: .infinity)
+            HStack(alignment: .top, spacing: 6) {
+                VStack(spacing: 4) {
+                    RemainingBar(remaining: nil, color: palette.ink, unitID: "usage-bar")
+                    HUDBarLabel(text: "REM", unitID: "usage-label")
+                }.frame(width: 12)
+                ResetBar(progress: nil, expired: false, color: palette.ink)
+            }.overlay(alignment: .top) {
+                SharedRemainingTicks().frame(width: 30, height: 64).allowsHitTesting(false).accessibilityHidden(true)
+            }
+        }.frame(height: 84).help(model.error ?? condition.detail)
+    }
+    private func unavailableReadings(_ condition: DataCondition) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 6) {
+                    metric("Remaining", value: "N/A", size: 28, color: palette.hud ? palette.ink : FlightDeck.caution)
+                    metric("Linear baseline", value: "N/A", size: 19, color: palette.muted)
+                }
+                Rectangle().fill(palette.separator).frame(width: 1, height: 84).hudUnit("numeric-divider")
+                unavailableSymbols(condition).frame(width: 94)
+            }.frame(height: 94)
+            Rectangle().fill(palette.separator).frame(height: 1).hudUnit("footer-rule")
+            HStack {
+                Text("RESET IN").font(FlightDeck.label(11)).hudTextUnit("reset-title", "RESET IN", size: 11, design: .monospaced)
+                Spacer()
+                Text("N/A").font(FlightDeck.label(11)).hudTextUnit("reset-na", "N/A", size: 11, design: .monospaced)
+            }.foregroundStyle(palette.muted).frame(height: 17)
+            Text(condition.detail).font(FlightDeck.label(9)).foregroundStyle(palette.muted).lineLimit(2)
+                .hudTextUnit("data-detail", condition.detail, size: 9, design: .monospaced, maxLines: 2)
+        }.help(model.error ?? condition.detail)
+    }
     private func risk(of provider: String) -> LimitRisk? {
-        (provider == "claude" ? model.claudeSnapshot : model.snapshot).riskiest(now: Date().timeIntervalSince1970)?.risk
+        let snapshot = provider == "claude" ? model.claudeSnapshot : model.snapshot
+        let now = Date().timeIntervalSince1970
+        let state = DataAvailability.evaluate(snapshot: snapshot, quota: snapshot.glance, refreshing: false, interval: model.interval, now: now)
+        return state.condition.permitsReference ? snapshot.riskiest(now: now)?.risk : nil
     }
     private func hudHealth(of provider: String) -> HUDServiceHealth {
         let snapshot = provider == "claude" ? model.claudeSnapshot : model.snapshot
         let now = Date().timeIntervalSince1970
-        guard let quota = snapshot.glance, snapshot.error == nil,
-              now - quota.observedAt <= Double(max(model.interval * 3, 600)) else { return .unavailable }
+        let state = DataAvailability.evaluate(snapshot: snapshot, quota: snapshot.glance, refreshing: false, interval: model.interval, now: now)
+        guard state.condition == .live || state.condition == .idle else { return .unavailable }
         switch snapshot.riskiest(now: now)?.risk {
         case .critical: return .critical
         case .warning: return .warning
@@ -578,22 +626,25 @@ struct MiniView: View {
     }
     private func symbols(_ quota: Quota, now: Date) -> some View {
         let time = now.timeIntervalSince1970
-        let baseline = quota.isIdle ? nil : quota.baseline(time)
+        let condition = model.availability(now: time).condition
+        let baseline = condition.permitsReference ? quota.baseline(time) : nil
         let expired = !quota.isIdle && time >= quota.resetAt
-        let stale = time - quota.observedAt > Double(max(model.interval * 3, 600))
         return HStack(alignment: .top, spacing: 6) {
             // 70 - 2 aligns the caption with the bars' 64 + 4 icon row.
             VStack(spacing: -2) {
-                VerticalComparison(remaining: quota.remaining, baseline: expired ? nil : baseline,
-                                   scale: model.miniDotScale, isCurrent: !stale && model.error == nil, color: palette.tint(model.accent), sampleTime: renderTime)
-                    .frame(height: 70)
+                Group {
+                    if condition.permitsReference {
+                        VerticalComparison(remaining: quota.remaining, baseline: baseline,
+                            scale: model.miniDotScale, isCurrent: true, color: palette.tint(model.accent), sampleTime: renderTime)
+                    } else { unavailableComparison(condition) }
+                }.frame(height: 70)
                 Group {
                     if model.miniHUD { Color.clear }
                     else { WindowDragRegion() }
                 }.frame(height: 10)
-                    .overlay(Text(model.miniDotScale.compactCaption).font(.system(size: 8, design: .monospaced))
+                    .overlay(Text(condition.permitsReference ? model.miniDotScale.compactCaption : condition.token).font(.system(size: 8, design: .monospaced))
                         .foregroundStyle(palette.muted)
-                        .hudTextUnit("scale-caption", model.miniDotScale.compactCaption, size: 8, design: .monospaced)
+                        .hudTextUnit("scale-caption", condition.permitsReference ? model.miniDotScale.compactCaption : condition.token, size: 8, design: .monospaced)
                         .allowsHitTesting(false))
             }.frame(maxWidth: .infinity)
                 .overlay {
@@ -611,13 +662,8 @@ struct MiniView: View {
             HStack(alignment: .top, spacing: 6) {
                 VStack(spacing: 4) {
                 // Capacity takes the limit-risk colour; the diamond keeps reporting pace.
-                RemainingBar(remaining: quota.remaining, color: palette.tint(quota.limitRisk(now: time)?.color ?? model.accent), unitID: "usage-bar")
-                if model.miniHUD {
-                    HUDBarLabel(text: "REM", unitID: "usage-label").help("Remaining usage").accessibilityHidden(true)
-                } else {
-                    Image(systemName: "battery.0percent").font(.system(size: 9)).foregroundStyle(palette.muted).frame(height: 10)
-                        .hudUnit("usage-icon").accessibilityHidden(true)
-                }
+                RemainingBar(remaining: quota.remaining, color: palette.hud ? palette.ink : condition.permitsReference ? quota.limitRisk(now: time)?.color ?? palette.ink : FlightDeck.caution, unitID: "usage-bar")
+                HUDBarLabel(text: "REM", unitID: "usage-label").help(condition.isLastKnown ? "Last observed remaining usage" : "Remaining usage").accessibilityHidden(true)
                 }.frame(width: 12)
                 ResetBar(progress: baseline, expired: expired, color: palette.tint(model.accent))
             }
@@ -632,15 +678,16 @@ struct MiniView: View {
         let time = now.timeIntervalSince1970
         let age = time - quota.observedAt
         let stale = age > Double(max(model.interval * 3, 600))
-        let resetTitle = model.miniHUD ? (quota.isIdle ? "RESET" : "RESET IN") : (quota.isIdle ? "Reset" : "Resets in")
-        let resetTime = quota.isIdle ? (model.miniHUD ? "IDLE" : "Starts on next use") : time >= quota.resetAt ? (model.miniHUD ? "WAIT" : "Waiting for reset") : MiniLayout.countdown(quota.resetAt - time)
-        let resetDate = quota.isIdle ? (model.miniHUD ? "WINDOW IDLE" : "Window not started") : "\(Formats.date(quota.resetAt)) \(Formats.zone)"
-        let dateLabel = model.miniHUD ? resetDate.uppercased() : resetDate
+        let condition = model.availability(now: time).condition
+        let resetTitle = "RESET IN"
+        let resetTime = condition.permitsReference ? MiniLayout.countdown(quota.resetAt - time) : "N/A"
+        let resetDate = condition.permitsReference ? "\(Formats.date(quota.resetAt)) \(Formats.zone)" : condition.token
+        let dateLabel = resetDate.uppercased()
         return VStack(alignment: .leading, spacing: 7) {
             HStack(alignment: .center, spacing: 12) {
                 VStack(alignment: .leading, spacing: 6) {
-                    metric("Remaining", value: Formats.percent(quota.remaining), size: 28, color: palette.tint(quota.limitRisk(now: time)?.color ?? model.accent))
-                    metric("Linear baseline", value: quota.isIdle ? "—" : String(format: "%.*f%%", GaugeScale.precision(model.displayStep), quota.baseline(time)), size: 19, color: palette.ink)
+                    metric(condition.isLastKnown ? "Last remaining" : "Remaining", value: Formats.percent(quota.remaining), size: 28, color: palette.hud ? palette.ink : condition.permitsReference ? quota.limitRisk(now: time)?.color ?? palette.ink : FlightDeck.caution)
+                    metric("Linear baseline", value: condition.permitsReference ? String(format: "%.*f%%", min(2, GaugeScale.precision(model.displayStep)), quota.baseline(time)) : "N/A", size: 19, color: palette.tint(model.accent))
                 }
                 Rectangle().fill(palette.separator).frame(width: 1, height: 84).hudUnit("numeric-divider")
                 // Both mini modes share the same scale, warning, drag, and wheel controls.
@@ -649,36 +696,36 @@ struct MiniView: View {
             Rectangle().fill(palette.separator).frame(height: 1).hudUnit("footer-rule")
             HStack {
                 Text(resetTitle).foregroundStyle(palette.muted)
-                    .hudTextUnit("reset-title", resetTitle, size: model.miniHUD ? 11 : 12, design: model.miniHUD ? .monospaced : .system)
+                    .hudTextUnit("reset-title", resetTitle, size: model.miniHUD ? 11 : 12, design: .monospaced)
                 Spacer()
                 Text(resetTime)
                     .monospacedDigit().foregroundStyle(palette.ink)
                     .hudTextUnit("reset-time", resetTime, size: model.miniHUD ? 11 : 12, design: model.miniHUD ? .monospaced : .digits)
-            }.font(.system(size: model.miniHUD ? 11 : 12, design: model.miniHUD ? .monospaced : .default)).frame(height: 17)
+            }.font(.system(size: model.miniHUD ? 11 : 12, design: .monospaced)).frame(height: 17)
             HStack(spacing: 3) {
-                Text(dateLabel).hudTextUnit("reset-date", dateLabel, size: 9, design: model.miniHUD ? .monospaced : .system)
+                Text(dateLabel).hudTextUnit("reset-date", dateLabel, size: 9, design: .monospaced)
                 Spacer(minLength: 2)
                 if model.error != nil {
                     Text(model.miniHUD ? "READ FAIL" : "Refresh failed").foregroundStyle(palette.tint(FlightDeck.amber)).help(model.error ?? "")
-                        .hudTextUnit("update-status", model.miniHUD ? "READ FAIL" : "Refresh failed", size: 9, design: model.miniHUD ? .monospaced : .system)
+                        .hudTextUnit("update-status", model.miniHUD ? "READ FAIL" : "Refresh failed", size: 9, design: .monospaced)
                 } else if stale {
                     let status = model.miniHUD ? "STALE \(Formats.duration(age))" : "\(Formats.duration(age)) old"
                     Text(status).foregroundStyle(palette.tint(FlightDeck.amber))
-                        .hudTextUnit("update-status", status, size: 9, design: model.miniHUD ? .monospaced : .system)
+                        .hudTextUnit("update-status", status, size: 9, design: .monospaced)
                 } else {
                     let status = "\(model.miniHUD ? "UPD" : "Updated") \(Formats.axisTime.string(from: quota.observedDate))"
-                    Text(status).hudTextUnit("update-status", status, size: 9, design: model.miniHUD ? .monospaced : .system)
+                    Text(status).hudTextUnit("update-status", status, size: 9, design: .monospaced)
                 }
-            }.font(.system(size: 9, design: model.miniHUD ? .monospaced : .default)).foregroundStyle(palette.muted).lineLimit(1)
+            }.font(.system(size: 9, design: .monospaced)).foregroundStyle(palette.muted).lineLimit(1)
         }
     }
     private func metric(_ label: String, value: String, size: CGFloat, color: Color) -> some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(model.miniHUD ? label.uppercased() : label).font(.system(size: model.miniHUD ? 9 : 10, design: model.miniHUD ? .monospaced : .default)).foregroundStyle(palette.muted)
-                .hudTextUnit("metric-label-\(label)", model.miniHUD ? label.uppercased() : label, size: model.miniHUD ? 9 : 10, design: model.miniHUD ? .monospaced : .system)
-            Text(value).font(.system(size: size, weight: model.miniHUD ? .regular : .medium, design: .monospaced)).tracking(model.miniHUD ? 0 : -0.8).monospacedDigit()
+            Text(label.uppercased()).font(.system(size: model.miniHUD ? 9 : 10, design: .monospaced)).foregroundStyle(palette.muted)
+                .hudTextUnit("metric-label-\(label)", label.uppercased(), size: model.miniHUD ? 9 : 10, design: .monospaced)
+            Text(value).font(.system(size: size, weight: .regular, design: .monospaced)).tracking(0).monospacedDigit()
                 .foregroundStyle(color).lineLimit(1).minimumScaleFactor(0.75)
-                .hudTextUnit("metric-value-\(label)", value, size: size, weight: model.miniHUD ? .regular : .medium, design: .monospaced, tracking: model.miniHUD ? 0 : -0.8)
+                .hudTextUnit("metric-value-\(label)", value, size: size, weight: .regular, design: .monospaced, tracking: 0)
         }.frame(maxWidth: .infinity, alignment: .leading)
     }
 }
@@ -1103,29 +1150,32 @@ struct SharedRemainingTicks: View {
 struct RemainingBar: View {
     @Environment(\.miniPalette) private var palette
     @Environment(\.displayScale) private var displayScale
-    let remaining: Double
+    let remaining: Double?
     let color: Color
     var unitID = "remaining-bar"
     var body: some View {
         GeometryReader { geometry in
             ZStack(alignment: .bottom) {
-                RoundedRectangle(cornerRadius: palette.hud ? 0 : 2).fill(palette.hud ? Color.clear : color.opacity(0.08))
-                Rectangle().fill(color).frame(height: geometry.size.height * min(1, max(0, remaining / 100)))
-            }.clipShape(RoundedRectangle(cornerRadius: palette.hud ? 0 : 2))
-                .overlay(RoundedRectangle(cornerRadius: palette.hud ? 0 : 2).strokeBorder(palette.hud ? palette.ink : palette.muted.opacity(0.5), lineWidth: palette.hud ? HUDStyle.stroke : 0.75))
-                .hudUnit(unitID, revision: Int((geometry.size.height * min(1, max(0, remaining / 100)) * displayScale).rounded()))
+                Rectangle().fill(palette.hud ? Color.clear : color.opacity(0.05))
+                if let remaining, remaining.isFinite {
+                    Rectangle().fill(color).frame(height: geometry.size.height * min(1, max(0, remaining / 100)))
+                } else { BarberPole(color: palette.hud ? palette.ink : FlightDeck.caution) }
+            }.clipped()
+                .overlay(Rectangle().strokeBorder(palette.hud ? palette.ink : palette.muted.opacity(0.65), lineWidth: HUDStyle.stroke))
+                .hudUnit(unitID, revision: remaining.map { Int((geometry.size.height * min(1, max(0, $0 / 100)) * displayScale).rounded()) } ?? -1)
         }.frame(width: 7, height: 64)
-            .help("Actual remaining usage: \(Formats.percent(remaining)). Full height is 100%.")
+            .help(remaining.map { "Remaining: " + Formats.percent($0) + ". Full height is 100%." } ?? "N/A: no valid measurement. Hatching is not a zero reading.")
             .accessibilityElement(children: .ignore).accessibilityLabel("Actual remaining usage")
-            .accessibilityValue(Formats.percent(remaining))
+            .accessibilityValue(remaining.map(Formats.percent) ?? "N/A")
     }
 }
 
 private struct HUDBarLabel: View {
+    @Environment(\.miniPalette) private var palette
     let text: String
     let unitID: String
     var body: some View {
-        Text(text).font(.system(size: HUDStyle.captionSize, design: .monospaced)).foregroundStyle(MiniPalette.hudGreen)
+        Text(text).font(.system(size: HUDStyle.captionSize, design: .monospaced)).foregroundStyle(palette.muted)
             .fixedSize().frame(height: 10)
             .hudTextUnit(unitID, text, size: HUDStyle.captionSize, design: .monospaced)
     }
@@ -1138,18 +1188,12 @@ struct ResetBar: View {
     let color: Color
     var body: some View {
         VStack(spacing: 4) {
-            RemainingBar(remaining: progress ?? 0, color: palette.ink, unitID: "reset-bar")
+            RemainingBar(remaining: progress, color: palette.tint(color), unitID: "reset-bar")
                 .accessibilityHidden(true)
-            if palette.hud {
-                HUDBarLabel(text: progress == nil ? "IDLE" : expired ? "RST" : "TTR", unitID: "reset-label")
-            } else {
-                Image(systemName: progress == nil ? "pause" : expired ? "arrow.clockwise" : "clock")
-                    .font(.system(size: 9)).foregroundStyle(palette.muted).frame(height: 10)
-                    .hudUnit("reset-icon")
-            }
+            HUDBarLabel(text: "TTR", unitID: "reset-label")
         }.frame(width: 12)
             .help(progress == nil ? "The reset window has not started" : expired ? "Waiting for a new reset window" : "Time left until reset")
             .accessibilityElement(children: .ignore).accessibilityLabel("Time left until reset")
-            .accessibilityValue(progress.map(Formats.percent) ?? "Not started")
+            .accessibilityValue(progress.map(Formats.percent) ?? "N/A")
     }
 }

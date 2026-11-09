@@ -63,7 +63,7 @@ struct Quota: Codable, Identifiable {
         return [Sample(t: observedAt, remaining: remaining), Sample(t: end, remaining: max(0, remaining - burn * (end - observedAt) / 86400))]
     }
     var forecastText: String {
-        guard let burn = dailyBurn else { return "Forecast available after \(lookbackText) of observations." }
+        guard let burn = dailyBurn else { return "FORECAST N/A / requires \(lookbackText) of observations." }
         let predicted = remaining - burn * max(0, resetAt - observedAt) / 86400
         if burn > 0 && predicted < 0 {
             let hours = (resetAt - observedAt - remaining / burn * 86400) / 3600
@@ -143,17 +143,19 @@ struct Snapshot: Codable {
     var accountKey: String?
     var windows: [Quota] = []
     var error: String?
+    var errorCode: String?
     var fetchedAt: Double?
     var source: String?
     var plan: String?
     var extra: ExtraUsage?
     var breakdown: [UsageShare]?
-    private enum CodingKeys: String, CodingKey { case windows, error, fetchedAt, accountKey, source, plan, extra, breakdown }
+    private enum CodingKeys: String, CodingKey { case windows, error, errorCode, fetchedAt, accountKey, source, plan, extra, breakdown }
     init() {}
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         windows = try values.decodeIfPresent([Quota].self, forKey: .windows) ?? []
         error = try values.decodeIfPresent(String.self, forKey: .error)
+        errorCode = try values.decodeIfPresent(String.self, forKey: .errorCode)
         fetchedAt = try values.decodeIfPresent(Double.self, forKey: .fetchedAt)
         accountKey = try values.decodeIfPresent(String.self, forKey: .accountKey)
         source = try values.decodeIfPresent(String.self, forKey: .source)
@@ -295,7 +297,7 @@ typealias UsageModel = ScreenshotModel
     }
     var error: String? { provider == "claude" ? claudeSnapshot.error : transientError ?? snapshot.error }
     var isRefreshing: Bool { provider == "claude" ? claudeRefreshing : refreshing }
-    var accent: Color { provider == "claude" ? FlightDeck.amber : FlightDeck.cyan }
+    var accent: Color { FlightDeck.cyan }
 
     init() {
         dataDirectory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Usage Gauge", isDirectory: true)
@@ -417,29 +419,32 @@ struct LiveMetrics: View {
     let quota: Quota
     let accent: Color
     let step: Double
+    var condition = DataCondition.live
     var body: some View {
         TimelineView(.periodic(from: .now, by: step)) { context in
             let baseline = quota.baseline(context.date.timeIntervalSince1970)
             let gap = quota.remaining - baseline
             HStack(spacing: 16) {
-                ReserveDial(remaining: quota.remaining, accent: quota.limitRisk(now: context.date.timeIntervalSince1970)?.color ?? accent)
+                ReserveDial(remaining: quota.remaining, accent: condition.permitsReference ? quota.limitRisk(now: context.date.timeIntervalSince1970)?.color ?? accent : FlightDeck.caution,
+                            caption: condition.isLastKnown ? "LAST REMAINING" : "REMAINING")
                 Rectangle().fill(.white.opacity(0.09)).frame(width: 1, height: 88)
                 VStack(alignment: .leading, spacing: 9) {
                     HStack {
-                        Text("Linear baseline").font(FlightDeck.label(9)).foregroundStyle(FlightDeck.muted)
+                        Text("LINEAR BASELINE").font(FlightDeck.label(9)).foregroundStyle(FlightDeck.muted)
                         Spacer(minLength: 2)
                         Text("\(String(format: "%g", step))s").font(FlightDeck.label(9)).foregroundStyle(accent.opacity(0.8))
                     }
-                    Text(String(format: "%.*f%%", GaugeScale.precision(step), baseline))
-                        .font(.system(size: 31, weight: .medium, design: .monospaced)).tracking(-1.1).monospacedDigit().foregroundStyle(accent)
+                    Text(condition.permitsReference ? String(format: "%.*f%%", min(2, GaugeScale.precision(step)), baseline) : "N/A")
+                        .font(.system(size: 31, weight: .regular, design: .monospaced)).tracking(0).monospacedDigit().foregroundStyle(accent)
 
                         .contentTransition(.numericText(countsDown: true))
                         .minimumScaleFactor(0.75).lineLimit(1)
-                    ReferenceTape(value: baseline, accent: accent)
+                    if condition.permitsReference { ReferenceTape(value: baseline, accent: accent) }
+                    else { BarberPole(color: FlightDeck.caution).frame(height: 5) }
                     HStack(spacing: 5) {
-                        Text(gap >= 0 ? "Above baseline" : "Below baseline").font(FlightDeck.label(8)).tracking(0.5)
+                        Text(condition.permitsReference ? (gap >= 0 ? "ABOVE BASELINE" : "BELOW BASELINE") : condition.token + " / LAST OBS").font(FlightDeck.label(8)).tracking(0.5)
                         Spacer(minLength: 2)
-                        Text(String(format: "%@%.*f pp", gap >= 0 ? "+" : "−", min(3, GaugeScale.precision(step)), abs(gap)))
+                        Text(condition.permitsReference ? String(format: "%@%.*f pp", gap >= 0 ? "+" : "−", min(2, GaugeScale.precision(step)), abs(gap)) : "N/A")
                             .font(FlightDeck.label(11)).monospacedDigit()
                     }.foregroundStyle(gap >= 0 ? FlightDeck.green : FlightDeck.amber)
                 }.frame(maxWidth: .infinity, alignment: .leading)
@@ -458,12 +463,12 @@ struct LiveCountdown: View {
             let seconds = tenths / 10
             HStack(alignment: .center, spacing: 9) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Resets in").font(FlightDeck.label(8)).tracking(0.6).foregroundStyle(FlightDeck.muted)
+                    Text("RESET IN").font(FlightDeck.label(8)).tracking(0.6).foregroundStyle(FlightDeck.muted)
 
                 }
                 Spacer(minLength: 2)
                 Text(step < 1 ? String(format: "%02d:%02d:%02d.%01d", seconds / 3600, seconds / 60 % 60, seconds % 60, tenths % 10) : String(format: "%02d:%02d:%02d", seconds / 3600, seconds / 60 % 60, seconds % 60))
-                    .font(.system(size: 24, weight: .medium, design: .monospaced)).foregroundStyle(accent).tracking(0.5)
+                    .font(.system(size: 24, weight: .regular, design: .monospaced)).foregroundStyle(accent).tracking(0.5)
                 Spacer(minLength: 2)
                 VStack(alignment: .trailing, spacing: 3) {
                     Text("Reset · \(Formats.zone)").font(FlightDeck.label(7)).foregroundStyle(FlightDeck.muted.opacity(0.65))
@@ -477,8 +482,11 @@ struct LiveCountdown: View {
 struct TrendChart: View {
     let quota: Quota
     @ObservedObject var model: UsageModel
-    private var domain: ClosedRange<Date> { GaugeScale.domain(quota, index: model.spanIndex, now: Date().timeIntervalSince1970) }
-    private var vertical: (range: ClosedRange<Double>, ticks: [Double]) { GaugeScale.vertical(quota, index: model.spanIndex, domain: domain) }
+    var referenceValid = true
+    private var domain: ClosedRange<Date> { GaugeScale.domain(quota, index: model.spanIndex, now: referenceValid ? Date().timeIntervalSince1970 : quota.observedAt) }
+    private var vertical: (range: ClosedRange<Double>, ticks: [Double]) {
+        referenceValid ? GaugeScale.vertical(quota, index: model.spanIndex, domain: domain) : (0...100, [0,25,50,75,100])
+    }
     private var selected: Sample? {
         guard let date = model.selectedDate else { return nil }
         return observed.min(by: { abs($0.t - date.timeIntervalSince1970) < abs($1.t - date.timeIntervalSince1970) })
@@ -495,14 +503,14 @@ struct TrendChart: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
             HStack(spacing: 10) {
-                Text("History").font(FlightDeck.label(9)).tracking(0.8).foregroundStyle(FlightDeck.ink)
+                Text("HISTORY").font(FlightDeck.label(9)).tracking(0.8).foregroundStyle(FlightDeck.ink)
                 Spacer(minLength: 2)
                 LegendItem(text: "Remaining", color: model.accent)
                 LegendItem(text: "Linear", color: FlightDeck.muted, dashed: true)
-                if model.spanIndex == 4 && !quota.projection.isEmpty { LegendItem(text: "Forecast", color: FlightDeck.forecast, dashed: true) }
+                if referenceValid && model.spanIndex == 4 && !quota.projection.isEmpty { LegendItem(text: "FCST", color: FlightDeck.forecast, dashed: true) }
             }
             Chart {
-                ForEach([Sample(t: domain.lowerBound.timeIntervalSince1970, remaining: quota.baseline(domain.lowerBound.timeIntervalSince1970)), Sample(t: domain.upperBound.timeIntervalSince1970, remaining: quota.baseline(domain.upperBound.timeIntervalSince1970))]) { point in
+                ForEach(referenceValid && !observed.isEmpty ? [Sample(t: domain.lowerBound.timeIntervalSince1970, remaining: quota.baseline(domain.lowerBound.timeIntervalSince1970)), Sample(t: domain.upperBound.timeIntervalSince1970, remaining: quota.baseline(domain.upperBound.timeIntervalSince1970))] : []) { point in
                     LineMark(x: .value("Time", point.date), y: .value("Remaining", point.remaining), series: .value("Series", "baseline"))
                         .foregroundStyle(FlightDeck.muted.opacity(0.8)).lineStyle(StrokeStyle(lineWidth: 0.85, dash: [4,4]))
                 }
@@ -512,11 +520,11 @@ struct TrendChart: View {
                             .foregroundStyle(model.accent).lineStyle(StrokeStyle(lineWidth: 1.25, lineCap: .round, lineJoin: .round))
                     }
                 }
-                ForEach(model.spanIndex == 4 ? quota.projection : []) { point in
+                ForEach(referenceValid && model.spanIndex == 4 ? quota.projection : []) { point in
                     LineMark(x: .value("Time", point.date), y: .value("Remaining", point.remaining), series: .value("Series", "forecast"))
                         .foregroundStyle(FlightDeck.forecast).lineStyle(StrokeStyle(lineWidth: 1, lineCap: .round, dash: [1,4]))
                 }
-                if domain.contains(quota.observedDate) {
+                if !observed.isEmpty && domain.contains(quota.observedDate) {
                     PointMark(x: .value("Time", quota.observedDate), y: .value("Remaining", quota.remaining))
                         .foregroundStyle(model.accent).symbolSize(12)
                 }
@@ -549,8 +557,16 @@ struct TrendChart: View {
             .chartXSelection(value: $model.selectedDate)
             .help("Click or drag to inspect observations")
             .frame(minHeight: 100, idealHeight: 130, maxHeight: .infinity)
+            .overlay {
+                if observed.isEmpty {
+                    VStack(spacing: 7) {
+                        Text("HISTORY N/A").font(FlightDeck.label(12))
+                        BarberPole(color: FlightDeck.muted).frame(width: 72, height: 5)
+                    }.foregroundStyle(FlightDeck.muted).padding(10).background(FlightDeck.screen)
+                }
+            }
             .accessibilityLabel("Remaining usage and linear reference until reset")
-            .accessibilityValue("Actual \(Formats.percent(quota.remaining)), reference \(Formats.percent(quota.baseline(quota.observedAt)))")
+            .accessibilityValue(referenceValid ? "Actual \(Formats.percent(quota.remaining)), reference \(Formats.percent(quota.baseline(quota.observedAt)))" : "Last observation \(Formats.percent(quota.remaining)); live reference N/A")
             Text(model.spanIndex == 4 ? "Scale 0–100%" : "Scale \(Formats.percent(vertical.range.lowerBound))–\(Formats.percent(vertical.range.upperBound))")
                 .font(FlightDeck.label(8)) .foregroundStyle(FlightDeck.muted).monospacedDigit()
             Text(selected.map { "\(Formats.date($0.t)) · Remaining \(Formats.percent($0.remaining)) · Linear \(Formats.percent(quota.baseline($0.t)))" } ?? (observed.isEmpty ? "No observations in this range." : ""))
@@ -566,34 +582,22 @@ struct GaugeView: View {
             VStack(alignment: .leading, spacing: 8) {
                 header
                 sourceSelector
-                if let quota = model.quota, let constraint = model.activeSnapshot.sharedConstraints(for: quota, now: context.date.timeIntervalSince1970).first {
-                    SharedLimitBanner(constraint: constraint, extra: model.provider == "claude" ? model.claudeSnapshot.extra : nil)
-                }
-                if let quota = model.quota, quota.isIdle {
-                    Spacer()
-                    idleCard(quota)
-                    Spacer()
-                } else if let quota = model.quota {
-                    LiveMetrics(quota: quota, accent: model.accent, step: model.displayStep).id(model.stepIndex)
-                    TrendChart(quota: quota, model: model).id(quota.id + String(quota.resetAt))
-                    details(quota, now: context.date)
-                    InstrumentPanel(model: model)
-                } else {
-                    let claudeWaiting = model.provider == "claude" && !model.isRefreshing
-                    Spacer()
-                    VStack(spacing: 15) {
-                        Image(systemName: "gauge.with.dots.needle.50percent").font(.system(size: 45)).foregroundStyle(model.accent)
-                        Text(claudeWaiting ? "Connect Claude" : "Loading usage…")
-                            .font(FlightDeck.label(15))
-                        Text(model.provider == "claude" ? "Limits appear automatically when Claude Code is signed in. Without Claude Code, connect your claude.ai account." : "Reading the limits for your signed-in Codex account.")
-                            .font(.system(size: 12)).foregroundStyle(FlightDeck.muted).multilineTextAlignment(.center)
-                        if claudeWaiting {
-                            Button("Connect Claude", action: model.connectClaude).buttonStyle(PanelButton(active: true, accent: model.accent))
-                        } else { ProgressView().controlSize(.small) }
-                        if let error = model.error { Text(error).font(.caption).foregroundStyle(FlightDeck.amber).multilineTextAlignment(.center) }
-                    }.padding(24).frame(maxWidth: .infinity).modifier(Bezel())
-                    Spacer()
-                }
+                let condition = model.availability(now: context.date.timeIntervalSince1970).condition
+                if let quota = model.quota, condition.permitsObservation {
+                    if condition.permitsReference, let constraint = model.activeSnapshot.sharedConstraints(for: quota, now: context.date.timeIntervalSince1970).first {
+                        SharedLimitBanner(constraint: constraint, extra: model.provider == "claude" ? model.claudeSnapshot.extra : nil)
+                    }
+                    if quota.isIdle {
+                        Spacer(minLength: 0)
+                        idleCard(quota)
+                        Spacer(minLength: 0)
+                    } else {
+                        LiveMetrics(quota: quota, accent: model.accent, step: model.displayStep, condition: condition).id(model.stepIndex)
+                        TrendChart(quota: quota, model: model, referenceValid: condition.permitsReference).id(quota.id + String(quota.resetAt))
+                        details(quota, now: context.date)
+                    }
+                } else { unavailableDashboard(condition) }
+                InstrumentPanel(model: model)
                 controls
             }
             .padding(16)
@@ -604,24 +608,61 @@ struct GaugeView: View {
             .environment(\.locale, Locale(identifier: "en_US"))
         }
     }
+    private func unavailableDashboard(_ condition: DataCondition) -> some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 18) {
+                ForEach(["REMAINING", "LINEAR BASELINE"], id: \.self) { label in
+                    VStack(alignment: .leading, spacing: 9) {
+                        Text(label).font(FlightDeck.label(9)).foregroundStyle(FlightDeck.muted)
+                        Text("N/A").font(FlightDeck.label(32)).foregroundStyle(condition.color)
+                        BarberPole(color: condition.color).frame(height: 5)
+                    }.frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }.padding(18).frame(height: 138).modifier(Bezel())
+            VStack(spacing: 12) {
+                DataFlag(condition: condition)
+                Text(condition.detail).font(FlightDeck.label(12)).multilineTextAlignment(.center)
+                Text("HISTORY / RESET / FORECAST   N/A").font(FlightDeck.label(10)).foregroundStyle(FlightDeck.muted)
+                BarberPole(color: condition.color).frame(width: 96, height: 6)
+                if let error = model.error {
+                    Text(error).font(FlightDeck.label(10)).foregroundStyle(FlightDeck.muted).lineLimit(3).multilineTextAlignment(.center).help(error)
+                }
+                HStack(spacing: 8) {
+                    if model.provider == "claude" {
+                        Button("CONNECT CLAUDE", action: model.connectClaude).buttonStyle(PanelButton(active: true, accent: model.accent))
+                    }
+                    Button("REFRESH", action: model.refresh).buttonStyle(PanelButton()).disabled(model.isRefreshing)
+                }
+                if condition == .authentication && model.provider == "codex" {
+                    Text("Sign in to the Codex CLI or desktop app, then refresh.").font(FlightDeck.label(10)).foregroundStyle(FlightDeck.muted)
+                }
+            }.padding(20).frame(maxWidth: .infinity, maxHeight: .infinity).modifier(Bezel())
+        }
+    }
     private var header: some View {
         HStack {
-            Text("Usage Gauge").font(.system(size: 17, weight: .semibold))
+            Text("USAGE GAUGE").font(FlightDeck.label(15)).tracking(1)
             Spacer()
             Button { model.miniMode = true } label: {
-                Label("Mini", systemImage: "arrow.down.right.and.arrow.up.left")
+                Text("MINI")
             }.buttonStyle(PanelButton()).help("Switch to the small window · Shift-Command-M")
         }.frame(height: 30)
     }
     private var sourceSelector: some View {
         HStack(spacing: 7) {
             ForEach(["codex", "claude"], id: \.self) { provider in
-                let alert = (provider == "claude" ? model.claudeSnapshot : model.snapshot).riskiest(now: Date().timeIntervalSince1970)
+                let snapshot = provider == "claude" ? model.claudeSnapshot : model.snapshot
+                let state = DataAvailability.evaluate(snapshot: snapshot, quota: snapshot.glance, refreshing: false, interval: model.interval, now: Date().timeIntervalSince1970)
+                let alert = state.condition.permitsReference ? snapshot.riskiest(now: Date().timeIntervalSince1970) : nil
                 Button { model.provider = provider } label: {
                     HStack(spacing: 6) {
-                        Circle().fill(alert?.risk.color ?? (model.provider == provider ? model.accent : FlightDeck.muted.opacity(0.35)))
-                            .frame(width: alert == nil ? 4 : 6, height: alert == nil ? 4 : 6)
-                        Text(provider.capitalized)
+                        Text(provider.uppercased())
+                        if state.condition != .live && state.condition != .idle {
+                            Text(state.condition.token).font(FlightDeck.label(8)).foregroundStyle(state.condition.color)
+                        } else {
+                            HUDServiceMark(health: alert?.risk == .critical ? .critical : alert?.risk == .warning ? .warning : .normal,
+                                           color: alert?.risk.color ?? FlightDeck.muted)
+                        }
                     }
                 }.buttonStyle(PanelButton(active: model.provider == provider, accent: model.accent))
                 .help(alert.map { "\($0.quota.title): \(Formats.percent($0.quota.remaining)) left · \($0.risk.label)" } ?? "")
@@ -630,9 +671,19 @@ struct GaugeView: View {
             }
             Spacer(minLength: 4)
             if model.activeSnapshot.windows.count > 1 {
-                Picker("Limit", selection: $model.selectedID) {
-                    ForEach(model.activeSnapshot.windows) { quota in Text(quota.title).tag(quota.id) }
-                }.labelsHidden().controlSize(.small).frame(maxWidth: 130)
+                Menu {
+                    ForEach(model.activeSnapshot.windows) { quota in
+                        Button(quota.title) { model.selectedID = quota.id }
+                    }
+                } label: {
+                    HStack {
+                        Text(model.quota?.title.uppercased() ?? "LIMIT N/A").lineLimit(1)
+                        Spacer(minLength: 2)
+                        Text("⌄")
+                    }.font(FlightDeck.label(9)).foregroundStyle(FlightDeck.ink).padding(8)
+                        .background(FlightDeck.panel).overlay(Rectangle().strokeBorder(FlightDeck.muted.opacity(0.3), lineWidth: 1))
+                }.menuStyle(.borderlessButton).menuIndicator(.hidden).frame(width: 130)
+                    .accessibilityLabel("Limit").accessibilityValue(model.quota?.title ?? "N/A")
             } else {
                 Text(model.quota?.title ?? "Account limit").font(FlightDeck.label(9)).foregroundStyle(FlightDeck.muted)
             }
@@ -644,14 +695,24 @@ struct GaugeView: View {
     private func details(_ quota: Quota, now: Date) -> some View {
         VStack(alignment: .leading, spacing: 7) {
             let expired = now.timeIntervalSince1970 >= quota.resetAt
-            LiveCountdown(resetAt: quota.resetAt, accent: model.accent, step: model.displayStep).id(model.stepIndex)
+            let condition = model.availability(now: now.timeIntervalSince1970).condition
+            if condition.permitsReference {
+                LiveCountdown(resetAt: quota.resetAt, accent: model.accent, step: model.displayStep).id(model.stepIndex)
+            } else {
+                HStack {
+                    Text("RESET IN").font(FlightDeck.label(9)).foregroundStyle(FlightDeck.muted)
+                    Spacer()
+                    Text("N/A").font(FlightDeck.label(24)).foregroundStyle(FlightDeck.caution)
+                    DataFlag(condition: condition)
+                }.frame(height: 32)
+            }
             Rectangle().fill(.white.opacity(0.07)).frame(height: 1)
             HStack(spacing: 5) {
                 Image(systemName: expired ? "clock" : "arrow.up.right").font(.system(size: 9))
-                Text(expired ? "Reset time passed. Waiting for a new observation." : quota.forecastText)
+                Text(!condition.permitsReference ? "FORECAST N/A / " + condition.detail : expired ? "Reset time passed. Waiting for a new observation." : quota.forecastText)
                     .font(.system(size: 10)).lineLimit(1).minimumScaleFactor(0.85)
             }.foregroundStyle(FlightDeck.muted).help("Estimate based on the most recent \(quota.lookbackText) of observed consumption.")
-            if model.provider == "claude" { claudeNotes(quota, now: now) }
+            if model.provider == "claude" && condition.permitsReference { claudeNotes(quota, now: now) }
             HStack {
                 if let error = model.error {
                     Annunciator(label: "Refresh failed · last known data", color: FlightDeck.amber).help(error)
@@ -661,7 +722,7 @@ struct GaugeView: View {
                     Text("Updated \(Formats.date(quota.observedAt)) \(Formats.zone)").font(FlightDeck.label(8)).foregroundStyle(FlightDeck.muted)
                 }
                 Spacer(minLength: 2)
-                if let risk = quota.limitRisk(now: now.timeIntervalSince1970) {
+                if condition.permitsReference, let risk = quota.limitRisk(now: now.timeIntervalSince1970) {
                     Annunciator(label: risk.label, color: risk.color)
                         .help(quota.severity != nil ? "Claude's own reading of how close this limit is to stopping work" : "Little capacity left, or the recent pace empties this limit before it resets")
                 }
@@ -691,6 +752,8 @@ struct GaugeView: View {
             Text(quota.durationMinutes == 300 ? "Session not started" : "Window not started").font(FlightDeck.label(14))
             Text(quota.durationMinutes == 300 ? "The 5-hour window starts with your next Claude message." : "This window starts with your next use.")
                 .font(.system(size: 12)).foregroundStyle(FlightDeck.muted).multilineTextAlignment(.center)
+            DataFlag(condition: .idle)
+            Text("BASELINE / TTR / FORECAST   N/A").font(FlightDeck.label(10)).foregroundStyle(FlightDeck.muted)
             if let error = model.error {
                 Text(error).font(.caption).foregroundStyle(FlightDeck.amber).multilineTextAlignment(.center)
             } else {
@@ -728,8 +791,8 @@ enum StatusBattery {
     static let body = NSSize(width: 28, height: 13)
     static let nub = NSSize(width: 1.5, height: 5)
     static let gap: CGFloat = 3
-    static let font = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .bold)
-    static func label(_ gauge: Gauge) -> String { "\(gauge.letter)\(gauge.remaining.map { String(Int($0.rounded())) } ?? "–")" }
+    static let font = NSFont.monospacedSystemFont(ofSize: 9, weight: .medium)
+    static func label(_ gauge: Gauge) -> String { "\(gauge.letter)\(gauge.remaining.map { String(Int($0.rounded())) } ?? "N/A")" }
     static func image(_ gauges: [Gauge], description: String, hud: Bool = false) -> NSImage {
         let slot = body.width + 1 + nub.width
         let size = NSSize(width: CGFloat(gauges.count) * slot + CGFloat(max(0, gauges.count - 1)) * gap, height: body.height + 2)
@@ -756,6 +819,19 @@ enum StatusBattery {
         outline.lineWidth = 1; outline.stroke()
         NSBezierPath(roundedRect: NSRect(x: frame.maxX + 1, y: frame.midY - nub.height / 2, width: nub.width, height: nub.height), xRadius: 0.75, yRadius: 0.75).fill()
         let inner = frame.insetBy(dx: 2, dy: 2)
+        if gauge.remaining == nil {
+            // A local invalid-data hatch must not look like an empty (0%) battery.
+            context.saveGState(); context.clip(to: inner)
+            ink.withAlphaComponent(0.3).setStroke()
+            let stripes = NSBezierPath()
+            for x in stride(from: inner.minX - inner.height, through: inner.maxX, by: 4) {
+                stripes.move(to: NSPoint(x: x, y: inner.minY)); stripes.line(to: NSPoint(x: x + inner.height, y: inner.maxY))
+            }
+            stripes.lineWidth = 0.75; stripes.stroke(); context.restoreGState()
+            let text = NSAttributedString(string: label(gauge), attributes: [.font: font, .foregroundColor: ink.withAlphaComponent(1)])
+            text.draw(at: NSPoint(x: frame.midX - text.size().width / 2, y: frame.midY - font.capHeight / 2 + font.descender))
+            context.endTransparencyLayer(); return
+        }
         (riskColor ?? ink).setFill()
         let level = min(1, max(0, (gauge.remaining ?? 0) / 100))
         NSBezierPath(roundedRect: NSRect(x: inner.minX, y: inner.minY, width: inner.width * level, height: inner.height), xRadius: 1.5, yRadius: 1.5).fill()
@@ -903,14 +979,16 @@ enum StatusBattery {
         let now = Date().timeIntervalSince1970
         let services = [(letter: "G", name: "Codex", snapshot: model.snapshot), (letter: "C", name: "Claude", snapshot: model.claudeSnapshot)]
         let gauges = services.map { service in
-            StatusBattery.Gauge(letter: service.letter, remaining: service.snapshot.glance?.remaining,
-                                risk: service.snapshot.riskiest(now: now)?.risk, failed: service.snapshot.error != nil)
+            let status = DataAvailability.evaluate(snapshot: service.snapshot, quota: service.snapshot.glance, refreshing: false, interval: model.interval, now: now)
+            let valid = status.condition == .live || status.condition == .idle
+            return StatusBattery.Gauge(letter: service.letter, remaining: valid ? service.snapshot.glance?.remaining : nil,
+                risk: valid ? service.snapshot.riskiest(now: now)?.risk : nil, failed: !valid)
         }
         let summaries = services.map { service -> String in
             let quota = service.snapshot.glance
-            return "\(service.name) · \(quota?.title ?? "No data") · \(quota.map { Formats.percent($0.remaining) } ?? "—") remaining"
-                + (service.snapshot.riskiest(now: now).map { " · \($0.risk.label)" } ?? "")
-                + (service.snapshot.error == nil ? "" : " · refresh failed")
+            let status = DataAvailability.evaluate(snapshot: service.snapshot, quota: quota, refreshing: false, interval: model.interval, now: now)
+            return service.name + " · " + status.condition.token + " · " + status.condition.detail
+                + (status.condition.permitsObservation ? quota.map { " Last observation " + Formats.percent($0.remaining) + " at " + Formats.date($0.observedAt) } ?? "" : "")
         }
         button.title = ""
         button.image = StatusBattery.image(gauges, description: summaries.joined(separator: "; "), hud: model.miniHUD)
@@ -955,6 +1033,7 @@ enum StatusBattery {
 @main struct UsageGaugeMain {
     @MainActor static func main() {
         if CommandLine.arguments.contains("--self-test") {
+            DataAvailability.selfTest()
             HUDContrastMask.selfTest()
             let points = (0...72).map { Sample(t: Double($0 * 3600), remaining: 100 - Double($0) / 24 * 20) }
             let quota = Quota(id: "test", name: "codex", durationMinutes: 10080, resetAt: 604800, remaining: 40, observedAt: 259200, points: points)
@@ -1028,7 +1107,11 @@ enum StatusBattery {
             precondition(first[0].limitRisk(now: at) == nil && first[1].limitRisk(now: at) == .critical && first[2].limitRisk(now: at) == nil)
             precondition(stored.riskiest(now: at)?.quota.id == "claude:seven_day" && stored.glance?.id == "claude:seven_day")
             precondition(StatusBattery.label(.init(letter: "G", remaining: 12.4, risk: nil)) == "G12")
-            precondition(StatusBattery.label(.init(letter: "C", remaining: nil, risk: nil)) == "C–")
+            precondition(StatusBattery.label(.init(letter: "C", remaining: nil, risk: nil)) == "CN/A")
+            for label in ["G100", "CN/A"] {
+                let width = NSAttributedString(string: label, attributes: [.font: StatusBattery.font]).size().width
+                precondition(width <= StatusBattery.body.width - 4, "Menu-bar 100 and N/A labels must fit without clipping")
+            }
             precondition(stored.sharedConstraints(for: first[2], now: at).map(\.quota.id) == ["claude:seven_day"])
             precondition(stored.sharedConstraints(for: first[0], now: at).map(\.quota.id) == ["claude:seven_day"])
             precondition(stored.sharedConstraints(for: first[1], now: at).isEmpty)
@@ -1048,6 +1131,12 @@ enum StatusBattery {
             if case .failure(let message) = ClaudeCLI.parse(Data(#"{"ok":false,"error":"Claude Code is not installed."}"#.utf8)) {
                 precondition(message == "Claude Code is not installed.")
             } else { preconditionFailure("CLI failure was not reported") }
+            if case .authenticationRequired = ClaudeCLI.parse(Data(#"{"ok":false,"error":"Sign-in required","errorCode":"auth_required"}"#.utf8)) {} else {
+                preconditionFailure("Explicit auth failure was not distinguished")
+            }
+            if case .failure = ClaudeCLI.parse(Data(#"{"ok":false,"error":"Temporary error; check sign-in if it persists","errorCode":"unavailable"}"#.utf8)) {} else {
+                preconditionFailure("A transport failure must not be classified as sign-out from its wording")
+            }
             let secondaryDisplay = NSRect(x: -1920, y: 100, width: 1920, height: 1056)
             for corner in MiniCorner.allCases {
                 for size in [MiniLayout.valueSize, MiniLayout.symbolSize] {
