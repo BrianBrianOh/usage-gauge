@@ -19,9 +19,12 @@ import UniformTypeIdentifiers
     @Published var miniOnTop = true
     @Published var miniSymbols = false
     @Published var miniHUD = false
+    @Published var renderHUDControls = false
+    @Published var hudControlsHovered = false
     @Published var miniAutoContrast = false
     @Published var hudContrastMap: NSImage?
-    @Published var hudContrastUnits: [HUDContrastUnit] = []
+    // Rendering output, not a view input: publishing it would feed layout back into itself.
+    var hudContrastUnits: [HUDContrastUnit] = []
     var onHUDContrastUnitsChanged: (([HUDContrastUnit]) -> Void)?
     @Published var hudContrastStatus = HUDContrastStatus.off
     var onRequestHUDContrastPermission: (() -> Void)?
@@ -108,6 +111,7 @@ private final class DocumentationWindow: NSWindow {
 @MainActor enum DocumentationRenderer {
     static func image<Content: View>(_ content: Content, size: NSSize) -> CGImage {
         let host = NSHostingView(rootView: content.environment(\.displayScale, 2))
+        host.sizingOptions = []
         host.frame = NSRect(origin: .zero, size: size); host.appearance = NSAppearance(named: .darkAqua)
         let window = DocumentationWindow(contentRect: host.frame, styleMask: .borderless, backing: .buffered, defer: false)
         window.isOpaque = false; window.backgroundColor = .clear; window.hasShadow = false

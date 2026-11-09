@@ -1,5 +1,9 @@
 import AppKit
 import SwiftUI
+import CoreText
+
+// Resolve the public property-wrapper type instead of newer SDKs' same-named macro.
+private typealias HUDState<Value> = SwiftUI.State<Value>
 
 struct MiniPalette {
     let hud: Bool
@@ -9,8 +13,42 @@ struct MiniPalette {
     var muted: Color { hud ? Self.hudGreen.opacity(0.9) : FlightDeck.muted }
     var panel: Color { hud ? .clear : FlightDeck.panel }
     var border: Color { hud ? .clear : .white.opacity(0.14) }
-    var separator: Color { hud ? Self.hudGreen.opacity(0.2) : .white.opacity(0.09) }
+    var separator: Color { hud ? Self.hudGreen.opacity(0.35) : .white.opacity(0.09) }
     func tint(_ color: Color) -> Color { hud ? Self.hudGreen : color }
+}
+
+enum HUDStyle {
+    static let stroke: CGFloat = 1
+    static let referenceStroke: CGFloat = 1.25
+    static let serviceSize: CGFloat = 10
+    static let captionSize: CGFloat = 8
+}
+
+enum HUDServiceHealth: Int {
+    case unavailable, normal, warning, critical
+    var label: String {
+        switch self {
+        case .unavailable: return "Data unavailable or stale"
+        case .normal: return "Limits normal"
+        case .warning: return "Limit warning"
+        case .critical: return "Limit critical"
+        }
+    }
+}
+
+struct HUDServiceMark: View {
+    let health: HUDServiceHealth
+    var body: some View {
+        ZStack {
+            switch health {
+            case .unavailable: Rectangle().frame(width: 5, height: HUDStyle.stroke)
+            case .normal: Circle().frame(width: 2, height: 2)
+            case .warning: Rectangle().strokeBorder(lineWidth: HUDStyle.stroke).frame(width: 5, height: 5)
+            case .critical: Rectangle().frame(width: 5, height: 5)
+            }
+        }.foregroundStyle(MiniPalette.hudGreen).frame(width: 5, height: 5)
+            .accessibilityLabel(health.label)
+    }
 }
 
 private struct MiniPaletteKey: EnvironmentKey {
@@ -24,9 +62,16 @@ extension EnvironmentValues {
     }
 }
 
+private struct HUDUnitAnchor {
+    let anchor: Anchor<CGRect>
+    let text: HUDInkText?
+    let revision: Int
+    var stencil: HUDInkStencil = .rendered
+    var layer: Int = 0
+}
 private struct HUDUnitAnchors: PreferenceKey {
-    static let defaultValue: [String: Anchor<CGRect>] = [:]
-    static func reduce(value: inout [String: Anchor<CGRect>], nextValue: () -> [String: Anchor<CGRect>]) {
+    static let defaultValue: [String: HUDUnitAnchor] = [:]
+    static func reduce(value: inout [String: HUDUnitAnchor], nextValue: () -> [String: HUDUnitAnchor]) {
         value.merge(nextValue(), uniquingKeysWith: { _, latest in latest })
     }
 }
@@ -35,8 +80,15 @@ private struct HUDUnitRects: PreferenceKey {
     static func reduce(value: inout [HUDContrastUnit], nextValue: () -> [HUDContrastUnit]) { value.append(contentsOf: nextValue()) }
 }
 private extension View {
-    func hudUnit(_ id: String) -> some View {
-        anchorPreference(key: HUDUnitAnchors.self, value: .bounds) { [id: $0] }
+    func hudUnit(_ id: String, revision: Int = 0, stencil: HUDInkStencil = .rendered, layer: Int = 0) -> some View {
+        anchorPreference(key: HUDUnitAnchors.self, value: .bounds) { [id: HUDUnitAnchor(anchor: $0, text: nil, revision: revision, stencil: stencil, layer: layer)] }
+    }
+    func hudTextUnit(_ id: String, _ text: String, size: CGFloat, weight: NSFont.Weight = .regular,
+                     design: HUDInkText.Design = .system, tracking: CGFloat = 0, insetX: CGFloat = 0, maxLines: Int = 1, trailingSymbol: String? = nil) -> some View {
+        anchorPreference(key: HUDUnitAnchors.self, value: .bounds) {
+            [id: HUDUnitAnchor(anchor: $0, text: HUDInkText(value: text, size: size, weight: weight.rawValue,
+                design: design, tracking: tracking, insetX: insetX, maxLines: maxLines, trailingSymbol: trailingSymbol), revision: 0)]
+        }
     }
     func hudHitArea(_ enabled: Bool) -> some View {
         background(Color.black.opacity(enabled ? 0.004 : 0)).contentShape(Rectangle())
@@ -84,9 +136,63 @@ final class MiniPanel: NSPanel {
 }
 
 final class MiniHostingView: NSHostingView<MiniView> {
+    private var pendingHoverExit: DispatchWorkItem?
+    private var localHoverMonitor: Any?
+    private var globalHoverMonitor: Any?
+    private var pointerLocation: NSPoint?
     override var isOpaque: Bool { false }
     override var mouseDownCanMoveWindow: Bool { !rootView.model.miniHUD }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    private var hudControlsRect: NSRect {
+        let padding: CGFloat = rootView.model.miniSymbols ? 8 : 12
+        let height: CGFloat = rootView.model.miniSymbols ? 40 : 42
+        return NSRect(x: padding, y: isFlipped ? padding - 1 : bounds.height - padding + 1 - height,
+                      width: max(0, bounds.width - padding * 2), height: height)
+    }
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        window?.acceptsMouseMovedEvents = true
+        guard window != nil, localHoverMonitor == nil else { return }
+        // Transparent parts of the HUD pass mouse events to the app underneath.
+        // Observe pointer events there too, without a polling timer or input capture.
+        let events: NSEvent.EventTypeMask = [.mouseMoved, .leftMouseDown, .leftMouseDragged]
+        localHoverMonitor = NSEvent.addLocalMonitorForEvents(matching: events) { [weak self] event in
+            self?.observePointer(event); return event
+        }
+        globalHoverMonitor = NSEvent.addGlobalMonitorForEvents(matching: events) { [weak self] event in
+            self?.observePointer(event)
+        }
+    }
+    deinit {
+        pendingHoverExit?.cancel()
+        if let localHoverMonitor { NSEvent.removeMonitor(localHoverMonitor) }
+        if let globalHoverMonitor { NSEvent.removeMonitor(globalHoverMonitor) }
+    }
+    private func observePointer(_ event: NSEvent) {
+        pointerLocation = event.window.map { $0.convertPoint(toScreen: event.locationInWindow) } ?? event.locationInWindow
+        refreshHUDHover()
+    }
+    private func refreshHUDHover() {
+        guard rootView.model.miniHUD, let window, window.isVisible else { setHUDHovered(false); return }
+        let point = window.convertPoint(fromScreen: pointerLocation ?? NSEvent.mouseLocation)
+        setHUDHovered(hudControlsRect.contains(convert(point, from: nil)))
+    }
+    private func setHUDHovered(_ value: Bool) {
+        pendingHoverExit?.cancel(); pendingHoverExit = nil
+        let update = { [weak self] in
+            guard let self, self.rootView.model.hudControlsHovered != value else { return }
+            self.rootView.model.hudControlsHovered = value
+        }
+        if value { DispatchQueue.main.async(execute: update) }
+        else {
+            let work = DispatchWorkItem(block: update); pendingHoverExit = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
+        }
+    }
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        refreshHUDHover()
+    }
 }
 
 /// A small blank header region provides a reliable drag target without capturing buttons.
@@ -101,9 +207,75 @@ struct WindowDragRegion: NSViewRepresentable {
     func updateNSView(_ view: DragView, context: Context) {}
 }
 
+/// Open HUD brackets with an input surface restricted to the space inside them.
+struct HUDDragHandle: NSViewRepresentable {
+    let color: Color
+    func makeNSView(context: Context) -> HUDDragHandleView { HUDDragHandleView() }
+    func updateNSView(_ view: HUDDragHandleView, context: Context) {
+        let ink = NSColor(color)
+        if !view.ink.isEqual(ink) { view.ink = ink; view.needsDisplay = true }
+    }
+}
+
+final class HUDDragHandleView: NSView {
+    var ink = NSColor(MiniPalette.hudGreen)
+    private var hovered = false
+    private var hoverArea: NSTrackingArea?
+    private var dragRect: NSRect { bounds.insetBy(dx: 1.5, dy: 1.5) }
+    override var isOpaque: Bool { false }
+    override var mouseDownCanMoveWindow: Bool { false }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard !isHidden, dragRect.contains(convert(point, from: superview)) else { return nil }
+        return super.hitTest(point)
+    }
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverArea { removeTrackingArea(hoverArea) }
+        let area = NSTrackingArea(rect: dragRect, options: [.mouseEnteredAndExited, .activeAlways], owner: self)
+        addTrackingArea(area); hoverArea = area
+    }
+    override func mouseEntered(with event: NSEvent) { hovered = true; needsDisplay = true }
+    override func mouseExited(with event: NSEvent) { hovered = false; needsDisplay = true }
+    override func draw(_ dirtyRect: NSRect) {
+        // Keep only the hollow interior interactive in the transparent window.
+        NSColor.black.withAlphaComponent(0.004).setFill(); dragRect.fill()
+        let rect = bounds.insetBy(dx: 0.5, dy: 0.5), leg: CGFloat = 3
+        let path = NSBezierPath()
+        for (x, y, dx, dy) in [(rect.minX, rect.minY, leg, leg),
+                               (rect.maxX, rect.minY, -leg, leg),
+                               (rect.minX, rect.maxY, leg, -leg),
+                               (rect.maxX, rect.maxY, -leg, -leg)] {
+            path.move(to: NSPoint(x: x + dx, y: y))
+            path.line(to: NSPoint(x: x, y: y))
+            path.line(to: NSPoint(x: x, y: y + dy))
+        }
+        ink.withAlphaComponent(hovered ? 0.95 : 0.7).setStroke()
+        path.lineWidth = HUDStyle.stroke; path.lineCapStyle = .butt; path.lineJoinStyle = .miter; path.stroke()
+    }
+    override func mouseDown(with event: NSEvent) {
+        guard dragRect.contains(convert(event.locationInWindow, from: nil)) else { return }
+        window?.performDrag(with: event)
+    }
+    override func isAccessibilityElement() -> Bool { true }
+    override func accessibilityRole() -> NSAccessibility.Role? { .image }
+    override func accessibilityLabel() -> String? { "Move HUD" }
+    override func accessibilityHelp() -> String? { "Drag inside the corner brackets to move the HUD" }
+}
+
 struct MiniView: View {
     @ObservedObject var model: UsageModel
+    @Environment(\.displayScale) private var displayScale
+    @HUDState private var hudControlsDragging = false
+    @HUDState private var hudTrackingMenus: Set<ObjectIdentifier> = []
     private var palette: MiniPalette { MiniPalette(hud: model.miniHUD) }
+    private var hudControlsVisible: Bool {
+        #if SCREENSHOT_RENDER
+        model.renderHUDControls
+        #else
+        model.hudControlsHovered || hudControlsDragging || !hudTrackingMenus.isEmpty
+        #endif
+    }
     private var renderTime: TimeInterval? {
         #if SCREENSHOT_RENDER
         model.renderTime
@@ -122,11 +294,18 @@ struct MiniView: View {
                 }.id(model.stepIndex)
             } else {
                 Spacer(minLength: 0)
-                Text(model.isRefreshing ? "Loading usage…" : "No usage data").font(.system(size: 15)).foregroundStyle(palette.ink).hudUnit("empty-title")
+                let title = model.miniHUD ? (model.isRefreshing ? "LOADING" : "NO DATA") : (model.isRefreshing ? "Loading usage…" : "No usage data")
+                Text(title).font(.system(size: model.miniHUD ? 11 : 15, design: model.miniHUD ? .monospaced : .default)).foregroundStyle(palette.ink)
+                    .hudTextUnit("empty-title", title, size: model.miniHUD ? 11 : 15, design: model.miniHUD ? .monospaced : .system)
                 if model.provider == "claude" && !model.isRefreshing {
-                    Button("Connect Claude", action: model.connectClaude).buttonStyle(.plain).foregroundStyle(palette.tint(model.accent)).hudUnit("connect")
+                    Button(model.miniHUD ? "CONNECT CLAUDE" : "Connect Claude", action: model.connectClaude)
+                        .font(.system(size: model.miniHUD ? 10 : 13, design: model.miniHUD ? .monospaced : .default))
+                        .buttonStyle(.plain).foregroundStyle(palette.tint(model.accent))
+                        .hudTextUnit("connect", model.miniHUD ? "CONNECT CLAUDE" : "Connect Claude", size: model.miniHUD ? 10 : 13, design: model.miniHUD ? .monospaced : .system)
                 }
-                Text(model.error ?? "Open the full window for account details.").font(.system(size: 10)).foregroundStyle(palette.muted).lineLimit(2).hudUnit("empty-detail")
+                let detail = model.error ?? (model.miniHUD ? "OPEN FULL WINDOW FOR ACCOUNT DETAILS." : "Open the full window for account details.")
+                Text(detail).font(.system(size: 10, design: model.miniHUD ? .monospaced : .default)).foregroundStyle(palette.muted).lineLimit(2)
+                    .hudTextUnit("empty-detail", detail, size: 10, design: model.miniHUD ? .monospaced : .system, maxLines: 2)
                 Spacer(minLength: 0)
             }
         }.padding(model.miniSymbols ? 8 : 12)
@@ -148,12 +327,23 @@ struct MiniView: View {
             .backgroundPreferenceValue(HUDUnitAnchors.self) { anchors in
                 GeometryReader { geometry in
                     Color.clear.preference(key: HUDUnitRects.self, value: anchors.keys.sorted().map {
-                        HUDContrastUnit(id: $0, rect: geometry[anchors[$0]!])
+                        let item = anchors[$0]!, rect = geometry[item.anchor]
+                        let aligned = item.text == nil ? CGRect(x: (rect.minX * displayScale).rounded(.down) / displayScale,
+                            y: (rect.minY * displayScale).rounded(.down) / displayScale,
+                            width: ((rect.maxX * displayScale).rounded(.up) - (rect.minX * displayScale).rounded(.down)) / displayScale,
+                            height: ((rect.maxY * displayScale).rounded(.up) - (rect.minY * displayScale).rounded(.down)) / displayScale) : rect
+                        return HUDContrastUnit(id: $0, rect: aligned, text: item.text, revision: item.revision, stencil: item.stencil, layer: item.layer)
                     })
                 }
             }
             .onPreferenceChange(HUDUnitRects.self) { units in
                 if model.hudContrastUnits != units { model.hudContrastUnits = units }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSMenu.didBeginTrackingNotification)) { notification in
+                if model.miniHUD, let menu = notification.object as? NSMenu { hudTrackingMenus.insert(ObjectIdentifier(menu)) }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSMenu.didEndTrackingNotification)) { notification in
+                if let menu = notification.object as? NSMenu { hudTrackingMenus.remove(ObjectIdentifier(menu)) }
             }
             .preferredColorScheme(.dark)
             .environment(\.locale, Locale(identifier: "en_US"))
@@ -163,7 +353,8 @@ struct MiniView: View {
             if model.miniSymbols {
                 if model.miniHUD {
                     HUDServiceLabel(selection: $model.provider, color: palette.ink)
-                        .frame(width: 42, height: 22).hudUnit("service")
+                        .frame(width: 42, height: 22)
+                        .hudTextUnit("service", model.provider.uppercased(), size: HUDStyle.serviceSize, design: .monospaced, insetX: 3)
                 } else {
                 Menu {
                     Picker("Service", selection: $model.provider) {
@@ -177,16 +368,25 @@ struct MiniView: View {
                 }
                 // Menu labels draw only text and images, so the other service's mark sits beside it.
                 let other = model.provider == "claude" ? "codex" : "claude"
-                RiskDot(risk: risk(of: other), tint: model.miniHUD ? palette.ink : nil).help(risk(of: other).map { "\(other.capitalized): \($0.label)" } ?? "").hudUnit("service-risk")
+                if model.miniHUD {
+                    let health = hudHealth(of: other)
+                    HUDServiceMark(health: health).help("\(other.capitalized): \(health.label)")
+                        .hudUnit("service-risk", revision: health.rawValue)
+                } else {
+                    RiskDot(risk: risk(of: other)).help(risk(of: other).map { "\(other.capitalized): \($0.label)" } ?? "")
+                }
             } else {
                 ForEach(["codex", "claude"], id: \.self) { provider in
                     if model.miniHUD {
                         HStack(spacing: 3) {
                             HUDServiceLabel(selection: $model.provider, labelProvider: provider, showsMenu: false,
-                                            color: model.provider == provider ? palette.ink : palette.muted)
+                                            color: model.provider == provider ? palette.ink : palette.ink.opacity(0.55))
                                 .frame(width: 42, height: 22)
-                            RiskDot(risk: risk(of: provider), tint: palette.ink)
-                        }.hudUnit("service-\(provider)")
+                                .hudTextUnit("service-\(provider)", provider.uppercased(), size: HUDStyle.serviceSize, design: .monospaced, insetX: 3)
+                            let health = hudHealth(of: provider)
+                            HUDServiceMark(health: health).help("\(provider.capitalized): \(health.label)")
+                                .hudUnit("service-risk-\(provider)", revision: health.rawValue)
+                        }
                     } else {
                     Button { model.provider = provider } label: {
                         HStack(spacing: 3) { Text(provider.capitalized); RiskDot(risk: risk(of: provider), tint: model.miniHUD ? palette.ink : nil) }
@@ -200,30 +400,39 @@ struct MiniView: View {
             }
             if model.miniHUD {
                 Spacer(minLength: 0)
-                Image(systemName: "cursorarrow").font(.system(size: 8))
-                    .foregroundStyle(palette.ink)
+                HUDDragHandle(color: palette.ink)
                     .frame(width: 12, height: 16)
-                    .background(Color.black.opacity(0.004))
-                    .overlay(RoundedRectangle(cornerRadius: 2).stroke(palette.ink, lineWidth: 0.7))
-                    .overlay(WindowDragRegion())
-                    .help("Drag to move HUD")
-                    .accessibilityLabel("Move HUD")
                     .hudUnit("drag-handle")
             } else {
                 WindowDragRegion().frame(minWidth: model.miniSymbols ? 5 : 10, maxWidth: .infinity, minHeight: 20)
             }
             if !model.miniSymbols {
-                Button { model.miniSymbols = true } label: { Image(systemName: "chart.bar") }
+                Button { model.miniSymbols = true } label: {
+                    if model.miniHUD { Text("SYM").font(.system(size: 8, design: .monospaced)).opacity(hudControlsVisible ? 1 : 0) }
+                    else { Image(systemName: "chart.bar") }
+                }
+                    .opacity(model.miniHUD && !hudControlsVisible ? 0 : 1)
                     .help("Symbols only").accessibilityLabel("Symbols only")
-                    .hudUnit("symbols-button")
-                Button { model.miniOnTop.toggle() } label: { Image(systemName: model.miniOnTop ? "pin.fill" : "pin") }
+                    .hudHitArea(model.miniHUD)
+                    .hudTextUnit("symbols-button", "SYM", size: 8, design: .monospaced)
+                Button { model.miniOnTop.toggle() } label: {
+                    if model.miniHUD { Text("PIN").font(.system(size: 8, design: .monospaced)).opacity(hudControlsVisible ? (model.miniOnTop ? 1 : 0.55) : 0) }
+                    else { Image(systemName: model.miniOnTop ? "pin.fill" : "pin") }
+                }
+                    .opacity(model.miniHUD && !hudControlsVisible ? 0 : 1)
                     .foregroundStyle(model.miniOnTop ? palette.tint(model.accent) : palette.muted)
                     .help(model.miniOnTop ? "Keep on top: on" : "Keep on top: off").accessibilityLabel("Keep mini window on top")
                     .accessibilityValue(model.miniOnTop ? "On" : "Off")
-                    .hudUnit("pin-button")
-                Button { model.miniMode = false } label: { Image(systemName: "arrow.up.left.and.arrow.down.right") }
+                    .hudHitArea(model.miniHUD)
+                    .hudTextUnit("pin-button", "PIN", size: 8, design: .monospaced)
+                Button { model.miniMode = false } label: {
+                    if model.miniHUD { Text("FULL").font(.system(size: 8, design: .monospaced)).opacity(hudControlsVisible ? 1 : 0) }
+                    else { Image(systemName: "arrow.up.left.and.arrow.down.right") }
+                }
+                    .opacity(model.miniHUD && !hudControlsVisible ? 0 : 1)
                     .help("Full window").accessibilityLabel("Full window")
-                    .hudUnit("full-button")
+                    .hudHitArea(model.miniHUD)
+                    .hudTextUnit("full-button", "FULL", size: 8, design: .monospaced)
             }
             Menu {
                 Toggle("Symbols only", isOn: $model.miniSymbols)
@@ -261,19 +470,22 @@ struct MiniView: View {
                 Button("Quit Usage Gauge") { NSApp.terminate(nil) }
             } label: {
                 if model.miniHUD {
-                    Text("⋯").font(.system(size: 17, weight: .semibold)).foregroundStyle(palette.ink)
+                    Text("⋯").font(.system(size: 13, design: .monospaced)).foregroundStyle(palette.ink)
+                        .opacity(hudControlsVisible ? 1 : 0)
                 } else {
                     Image(systemName: "ellipsis")
                 }
             }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden)
                 .frame(width: 24, height: 22).contentShape(Rectangle())
+                .opacity(model.miniHUD && !hudControlsVisible ? 0 : 1)
                 .hudHitArea(model.miniHUD)
                 .help("Options").accessibilityLabel("Options")
-                .hudUnit("options")
+                .hudUnit("options", revision: model.miniHUD && hudControlsVisible ? 1 : 0)
         }.buttonStyle(.plain).font(.system(size: 11)).frame(height: 20)
     }
     @ViewBuilder private func limitSelector(_ quota: Quota) -> some View {
+        let title = model.miniHUD ? hudLimitTitle(quota) : model.miniSymbols ? symbolTitle(quota, compact: true) : quota.title
         HStack(spacing: 2) {
             if model.activeSnapshot.windows.count > 1 {
                 Menu {
@@ -282,12 +494,12 @@ struct MiniView: View {
                     }
                 } label: {
                     HStack(spacing: 3) {
-                        Text(model.miniSymbols ? symbolTitle(quota, compact: true) : quota.title)
-                            .font(.system(size: 10))
+                        Text(title)
+                            .font(.system(size: 10, design: model.miniHUD ? .monospaced : .default))
                             .foregroundStyle(palette.muted)
                             .lineLimit(1).fixedSize(horizontal: model.miniSymbols, vertical: false)
                         if !model.miniSymbols {
-                            if model.miniHUD { Text("⌄").font(.system(size: 10)).foregroundStyle(palette.muted) }
+                            if model.miniHUD { Text("⌄").font(.system(size: 10, design: .monospaced)).foregroundStyle(palette.muted).hudUnit("limit-arrow") }
                             else { Image(systemName: "chevron.down").font(.system(size: 7)) }
                         }
                     }
@@ -296,8 +508,10 @@ struct MiniView: View {
                     .accessibilityLabel("Limit").accessibilityValue(symbolTitle(quota))
                     .help("Select limit: \(symbolTitle(quota))")
                     .hudHitArea(model.miniHUD)
-                    .hudUnit("limit")
-            } else { Text(model.miniSymbols ? symbolTitle(quota, compact: true) : quota.title).hudUnit("limit") }
+                    .hudTextUnit("limit", title, size: 10, design: model.miniHUD ? .monospaced : .system,
+                        trailingSymbol: model.miniSymbols ? nil : "⌄")
+            } else { Text(title).font(.system(size: 10, design: model.miniHUD ? .monospaced : .default))
+                .hudTextUnit("limit", title, size: 10, design: model.miniHUD ? .monospaced : .system) }
             if let constraint = model.activeSnapshot.sharedConstraints(for: quota, now: Date().timeIntervalSince1970).first {
                 Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 9)).frame(width: model.miniSymbols ? 9 : nil).foregroundStyle(palette.tint(constraint.risk.color))
                     .help("\(constraint.quota.title): \(Formats.percent(constraint.quota.remaining)) left · \(constraint.risk.label). It counts all usage, so it can stop work before this limit does.")
@@ -315,11 +529,14 @@ struct MiniView: View {
                     .hudUnit("stale")
             } else if model.isRefreshing {
                 if model.miniSymbols { Image(systemName: "arrow.triangle.2.circlepath").font(.system(size: 8)).frame(width: 9).help("Updating…").hudUnit("refreshing") }
-                else { Text("Updating…").hudUnit("refreshing") }
+                else { Text(model.miniHUD ? "UPD" : "Updating…")
+                    .font(.system(size: 10, design: model.miniHUD ? .monospaced : .default))
+                    .hudTextUnit("refreshing", model.miniHUD ? "UPD" : "Updating…", size: 10, design: model.miniHUD ? .monospaced : .system) }
             }
             Group {
                 if model.miniHUD {
-                    HUDOpacitySlider(value: $model.miniOpacity)
+                    HUDOpacitySlider(value: $model.miniOpacity) { hudControlsDragging = $0 }
+                        .opacity(hudControlsVisible ? 1 : 0)
                 } else {
                     Slider(value: $model.miniOpacity, in: 0.3...1, step: 0.05)
                         .labelsHidden().controlSize(.mini).tint(model.accent)
@@ -330,11 +547,28 @@ struct MiniView: View {
                 .accessibilityValue("\(Int((model.miniOpacity * 100).rounded())) percent")
                 .help("Window opacity: \(Int((model.miniOpacity * 100).rounded()))%")
                 .hudHitArea(model.miniHUD)
-                .hudUnit("opacity")
         }.font(.system(size: 10)).foregroundStyle(palette.muted).frame(height: 14)
     }
     private func risk(of provider: String) -> LimitRisk? {
         (provider == "claude" ? model.claudeSnapshot : model.snapshot).riskiest(now: Date().timeIntervalSince1970)?.risk
+    }
+    private func hudHealth(of provider: String) -> HUDServiceHealth {
+        let snapshot = provider == "claude" ? model.claudeSnapshot : model.snapshot
+        let now = Date().timeIntervalSince1970
+        guard let quota = snapshot.glance, snapshot.error == nil,
+              now - quota.observedAt <= Double(max(model.interval * 3, 600)) else { return .unavailable }
+        switch snapshot.riskiest(now: now)?.risk {
+        case .critical: return .critical
+        case .warning: return .warning
+        case nil: return .normal
+        }
+    }
+    private func hudLimitTitle(_ quota: Quota) -> String {
+        if quota.name == "codex" || quota.name == "claude" {
+            return quota.durationMinutes == 300 ? "SESS" : quota.durationMinutes == 10080 ? "WEEK" : "WINDOW"
+        }
+        let name = symbolTitle(quota, compact: true).uppercased()
+        return model.miniSymbols ? String(name.prefix(6)) : name
     }
     private func symbolTitle(_ quota: Quota, compact: Bool = false) -> String {
         let period = quota.durationMinutes == 300 ? "Session" : quota.durationMinutes == 10080 ? "Weekly" : "Current window"
@@ -358,7 +592,9 @@ struct MiniView: View {
                     else { WindowDragRegion() }
                 }.frame(height: 10)
                     .overlay(Text(model.miniDotScale.compactCaption).font(.system(size: 8, design: .monospaced))
-                        .foregroundStyle(palette.muted).allowsHitTesting(false))
+                        .foregroundStyle(palette.muted)
+                        .hudTextUnit("scale-caption", model.miniDotScale.compactCaption, size: 8, design: .monospaced)
+                        .allowsHitTesting(false))
             }.frame(maxWidth: .infinity)
                 .overlay {
                     if model.miniHUD {
@@ -372,68 +608,82 @@ struct MiniView: View {
                         DotScaleWheel(selection: $model.miniDotIndex, labels: model.miniDotScale.optionNames)
                     }
                 }
-                .hudUnit("pace")
             HStack(alignment: .top, spacing: 6) {
                 VStack(spacing: 4) {
                 // Capacity takes the limit-risk colour; the diamond keeps reporting pace.
-                RemainingBar(remaining: quota.remaining, color: palette.tint(quota.limitRisk(now: time)?.color ?? model.accent))
-                Image(systemName: "battery.0percent").font(.system(size: 9)).foregroundStyle(palette.muted).frame(height: 10)
-                    .accessibilityHidden(true)
+                RemainingBar(remaining: quota.remaining, color: palette.tint(quota.limitRisk(now: time)?.color ?? model.accent), unitID: "usage-bar")
+                if model.miniHUD {
+                    HUDBarLabel(text: "REM", unitID: "usage-label").help("Remaining usage").accessibilityHidden(true)
+                } else {
+                    Image(systemName: "battery.0percent").font(.system(size: 9)).foregroundStyle(palette.muted).frame(height: 10)
+                        .hudUnit("usage-icon").accessibilityHidden(true)
+                }
                 }.frame(width: 12)
                 ResetBar(progress: baseline, expired: expired, color: palette.tint(model.accent))
-            }.hudUnit("remaining-bars")
-        }.frame(height: 84)
-            .overlay(alignment: .topTrailing) {
+            }
+            // Attach the scale to the bars, before the surrounding 84pt row centers them.
+            .overlay(alignment: .top) {
                 SharedRemainingTicks().frame(width: 30, height: 64)
                     .allowsHitTesting(false).accessibilityHidden(true)
             }
+        }.frame(height: 84)
     }
     private func readings(_ quota: Quota, now: Date) -> some View {
         let time = now.timeIntervalSince1970
         let age = time - quota.observedAt
         let stale = age > Double(max(model.interval * 3, 600))
+        let resetTitle = model.miniHUD ? (quota.isIdle ? "RESET" : "RESET IN") : (quota.isIdle ? "Reset" : "Resets in")
+        let resetTime = quota.isIdle ? (model.miniHUD ? "IDLE" : "Starts on next use") : time >= quota.resetAt ? (model.miniHUD ? "WAIT" : "Waiting for reset") : MiniLayout.countdown(quota.resetAt - time)
+        let resetDate = quota.isIdle ? (model.miniHUD ? "WINDOW IDLE" : "Window not started") : "\(Formats.date(quota.resetAt)) \(Formats.zone)"
+        let dateLabel = model.miniHUD ? resetDate.uppercased() : resetDate
         return VStack(alignment: .leading, spacing: 7) {
             HStack(alignment: .center, spacing: 12) {
                 VStack(alignment: .leading, spacing: 6) {
                     metric("Remaining", value: Formats.percent(quota.remaining), size: 28, color: palette.tint(quota.limitRisk(now: time)?.color ?? model.accent))
                     metric("Linear baseline", value: quota.isIdle ? "—" : String(format: "%.*f%%", GaugeScale.precision(model.displayStep), quota.baseline(time)), size: 19, color: palette.ink)
                 }
-                Rectangle().fill(palette.separator).frame(width: 1, height: 84)
+                Rectangle().fill(palette.separator).frame(width: 1, height: 84).hudUnit("numeric-divider")
                 // Both mini modes share the same scale, warning, drag, and wheel controls.
                 symbols(quota, now: now).frame(width: 94)
             }.frame(height: 94)
-            Rectangle().fill(palette.separator).frame(height: 1)
+            Rectangle().fill(palette.separator).frame(height: 1).hudUnit("footer-rule")
             HStack {
-                Text(quota.isIdle ? "Reset" : "Resets in").foregroundStyle(palette.muted).hudUnit("reset-title")
+                Text(resetTitle).foregroundStyle(palette.muted)
+                    .hudTextUnit("reset-title", resetTitle, size: model.miniHUD ? 11 : 12, design: model.miniHUD ? .monospaced : .system)
                 Spacer()
-                Text(quota.isIdle ? "Starts on next use" : time >= quota.resetAt ? "Waiting for reset" : MiniLayout.countdown(quota.resetAt - time))
+                Text(resetTime)
                     .monospacedDigit().foregroundStyle(palette.ink)
-                    .hudUnit("reset-time")
-            }.font(.system(size: 12)).frame(height: 17)
+                    .hudTextUnit("reset-time", resetTime, size: model.miniHUD ? 11 : 12, design: model.miniHUD ? .monospaced : .digits)
+            }.font(.system(size: model.miniHUD ? 11 : 12, design: model.miniHUD ? .monospaced : .default)).frame(height: 17)
             HStack(spacing: 3) {
-                Text(quota.isIdle ? "Window not started" : "\(Formats.date(quota.resetAt)) \(Formats.zone)")
-                    .hudUnit("reset-date")
+                Text(dateLabel).hudTextUnit("reset-date", dateLabel, size: 9, design: model.miniHUD ? .monospaced : .system)
                 Spacer(minLength: 2)
                 if model.error != nil {
-                    Text("Refresh failed").foregroundStyle(palette.tint(FlightDeck.amber)).help(model.error ?? "").hudUnit("update-status")
+                    Text(model.miniHUD ? "READ FAIL" : "Refresh failed").foregroundStyle(palette.tint(FlightDeck.amber)).help(model.error ?? "")
+                        .hudTextUnit("update-status", model.miniHUD ? "READ FAIL" : "Refresh failed", size: 9, design: model.miniHUD ? .monospaced : .system)
                 } else if stale {
-                    Text("\(Formats.duration(age)) old").foregroundStyle(palette.tint(FlightDeck.amber)).hudUnit("update-status")
+                    let status = model.miniHUD ? "STALE \(Formats.duration(age))" : "\(Formats.duration(age)) old"
+                    Text(status).foregroundStyle(palette.tint(FlightDeck.amber))
+                        .hudTextUnit("update-status", status, size: 9, design: model.miniHUD ? .monospaced : .system)
                 } else {
-                    Text("Updated \(Formats.axisTime.string(from: quota.observedDate))").hudUnit("update-status")
+                    let status = "\(model.miniHUD ? "UPD" : "Updated") \(Formats.axisTime.string(from: quota.observedDate))"
+                    Text(status).hudTextUnit("update-status", status, size: 9, design: model.miniHUD ? .monospaced : .system)
                 }
-            }.font(.system(size: 9)).foregroundStyle(palette.muted).lineLimit(1)
+            }.font(.system(size: 9, design: model.miniHUD ? .monospaced : .default)).foregroundStyle(palette.muted).lineLimit(1)
         }
     }
     private func metric(_ label: String, value: String, size: CGFloat, color: Color) -> some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(label).font(.system(size: 10)).foregroundStyle(palette.muted)
-            Text(value).font(.system(size: size, weight: .medium, design: .monospaced)).tracking(-0.8).monospacedDigit()
+            Text(model.miniHUD ? label.uppercased() : label).font(.system(size: model.miniHUD ? 9 : 10, design: model.miniHUD ? .monospaced : .default)).foregroundStyle(palette.muted)
+                .hudTextUnit("metric-label-\(label)", model.miniHUD ? label.uppercased() : label, size: model.miniHUD ? 9 : 10, design: model.miniHUD ? .monospaced : .system)
+            Text(value).font(.system(size: size, weight: model.miniHUD ? .regular : .medium, design: .monospaced)).tracking(model.miniHUD ? 0 : -0.8).monospacedDigit()
                 .foregroundStyle(color).lineLimit(1).minimumScaleFactor(0.75)
-        }.frame(maxWidth: .infinity, alignment: .leading).hudUnit("metric-\(label)")
+                .hudTextUnit("metric-value-\(label)", value, size: size, weight: model.miniHUD ? .regular : .medium, design: .monospaced, tracking: model.miniHUD ? 0 : -0.8)
+        }.frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
-/// Service names only select a service; the separate cursor box owns HUD dragging.
+/// Service names only select a service; the separate corner brackets own HUD dragging.
 struct HUDServiceLabel: NSViewRepresentable {
     @Binding var selection: String
     var labelProvider: String? = nil
@@ -442,7 +692,7 @@ struct HUDServiceLabel: NSViewRepresentable {
     func makeNSView(context: Context) -> HUDServiceControl { HUDServiceControl() }
     func updateNSView(_ view: HUDServiceControl, context: Context) {
         view.selectedProvider = selection; view.labelProvider = labelProvider ?? selection
-        view.showsMenu = showsMenu; view.ink = NSColor(color)
+        view.showsMenu = showsMenu; view.ink = NSColor(color).usingColorSpace(.sRGB) ?? .green
         view.onSelect = { selection = $0 }; view.needsDisplay = true
         view.toolTip = showsMenu ? "Click to choose service" : "Click to select \(view.labelProvider.capitalized)"
     }
@@ -462,9 +712,19 @@ final class HUDServiceControl: NSControl {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     override func draw(_ dirtyRect: NSRect) {
         NSColor.black.withAlphaComponent(0.004).setFill(); bounds.fill()
-        let weight: NSFont.Weight = labelProvider == selectedProvider ? .semibold : .regular
-        let text = NSAttributedString(string: labelProvider.capitalized, attributes: [.font: NSFont.systemFont(ofSize: 11, weight: weight), .foregroundColor: ink])
-        text.draw(at: NSPoint(x: 3, y: (bounds.height - text.size().height) / 2))
+        guard let context = NSGraphicsContext.current?.cgContext else { return }
+        let font = NSFont.monospacedSystemFont(ofSize: HUDStyle.serviceSize, weight: .regular)
+        let text = NSAttributedString(string: labelProvider.uppercased(), attributes: [
+            NSAttributedString.Key(kCTFontAttributeName as String): CTFontCreateWithName(font.fontName as CFString, HUDStyle.serviceSize, nil),
+            NSAttributedString.Key(kCTForegroundColorAttributeName as String): ink.cgColor
+        ])
+        let line = CTLineCreateWithAttributedString(text)
+        var ascent: CGFloat = 0, descent: CGFloat = 0
+        CTLineGetTypographicBounds(line, &ascent, &descent, nil)
+        // Draw directly in CoreText; AppKit's string sizing can fail during cacheDisplay.
+        context.saveGState(); context.textMatrix = .identity
+        context.textPosition = CGPoint(x: 3, y: (bounds.height - ascent - descent) / 2 + descent)
+        CTLineDraw(line, context); context.restoreGState()
     }
     override func mouseDown(with event: NSEvent) { mousePress = event }
     override func mouseDragged(with event: NSEvent) {
@@ -502,6 +762,8 @@ final class HUDServiceControl: NSControl {
 /// A monochrome control whose thumb and track keep the HUD's green ink.
 struct HUDOpacitySlider: View {
     @Binding var value: Double
+    var onEditingChanged: (Bool) -> Void = { _ in }
+    @HUDState private var editing = false
     var body: some View {
         GeometryReader { geometry in
             let travel = max(1, geometry.size.width - 6)
@@ -509,14 +771,17 @@ struct HUDOpacitySlider: View {
             ZStack(alignment: .leading) {
                 Rectangle().fill(MiniPalette.hudGreen.opacity(0.35)).frame(height: 1)
                     .padding(.horizontal, 3)
+                    .hudUnit("opacity-track")
                 Rectangle().fill(MiniPalette.hudGreen).frame(width: 4, height: 9)
+                    .hudUnit("opacity-thumb", layer: 1)
                     .offset(x: 1 + travel * position)
             }.frame(height: geometry.size.height)
                 .contentShape(Rectangle())
                 .gesture(DragGesture(minimumDistance: 0).onChanged { drag in
+                    if !editing { editing = true; onEditingChanged(true) }
                     let fraction = min(1, max(0, (drag.location.x - 3) / travel))
                     value = MiniLayout.opacity(((0.3 + fraction * 0.7) / 0.05).rounded() * 0.05)
-                })
+                }.onEnded { _ in editing = false; onEditingChanged(false) })
         }.accessibilityElement(children: .ignore)
             .accessibilityLabel("Window opacity")
             .accessibilityValue("\(Int((value * 100).rounded())) percent")
@@ -733,25 +998,29 @@ struct VerticalComparison: View {
                     let dotX = x - 22
                     if tick == 0 {
                         Path { path in
-                            path.move(to: CGPoint(x: dotX - 2.5, y: y)); path.addLine(to: CGPoint(x: dotX + 2.5, y: y))
-                            path.move(to: CGPoint(x: dotX, y: y - 2.5)); path.addLine(to: CGPoint(x: dotX, y: y + 2.5))
-                        }.stroke(palette.hud ? palette.ink : palette.muted.opacity(0.85), lineWidth: palette.hud ? 1 : 0.75)
+                            path.move(to: CGPoint(x: 0, y: 2.5)); path.addLine(to: CGPoint(x: 5, y: 2.5))
+                            path.move(to: CGPoint(x: 2.5, y: 0)); path.addLine(to: CGPoint(x: 2.5, y: 5))
+                        }.stroke(palette.hud ? palette.ink : palette.muted.opacity(0.85), lineWidth: palette.hud ? HUDStyle.stroke : 0.75)
+                            .frame(width: 5, height: 5).padding(0.5).hudUnit("pace-cross", stencil: .cross).position(x: dotX, y: y)
                     } else {
-                        Circle().stroke(palette.hud ? palette.ink : palette.muted.opacity(0.65), lineWidth: palette.hud ? 1 : 0.75)
-                            .frame(width: 3, height: 3).position(x: dotX, y: y)
+                        Circle().stroke(palette.hud ? palette.ink : palette.muted.opacity(0.65), lineWidth: palette.hud ? HUDStyle.stroke : 0.75)
+                            .frame(width: 3, height: 3).padding(0.5).hudUnit("pace-dot-\(tick)", stencil: .circle).position(x: dotX, y: y)
                     }
                 }
                 if deviation.difference != nil {
                     let y = center - deviation.normalized * travel
-                    Rectangle().fill(palette.ink).frame(width: 32, height: 1.25).position(x: x, y: y)
+                    Rectangle().fill(palette.ink).frame(width: 32, height: HUDStyle.referenceStroke).hudUnit("pace-reference").position(x: x, y: y)
                         .help("Linear baseline: \(Formats.percent(baseline!))").opacity(isCurrent ? 1 : 0.4)
                     if deviation.outsideScale {
+                        let direction = deviation.normalized > 0 ? -1.0 : 1.0
                         Path { path in
-                            let direction = deviation.normalized > 0 ? -1.0 : 1.0
-                            path.move(to: CGPoint(x: x - 3, y: y + direction * 3))
-                            path.addLine(to: CGPoint(x: x, y: y + direction * 6))
-                            path.addLine(to: CGPoint(x: x + 3, y: y + direction * 3))
-                        }.stroke(palette.ink.opacity(isCurrent ? 1 : 0.4), style: StrokeStyle(lineWidth: 1, lineCap: .round, lineJoin: .round))
+                            path.move(to: CGPoint(x: 0, y: direction < 0 ? 3 : 0))
+                            path.addLine(to: CGPoint(x: 3, y: direction < 0 ? 0 : 3))
+                            path.addLine(to: CGPoint(x: 6, y: direction < 0 ? 3 : 0))
+                        }.stroke(palette.ink.opacity(isCurrent ? 1 : 0.4), style: StrokeStyle(lineWidth: HUDStyle.stroke,
+                            lineCap: palette.hud ? .butt : .round, lineJoin: palette.hud ? .miter : .round))
+                            .frame(width: 6, height: 3).padding(0.5).hudUnit("pace-overflow")
+                            .position(x: x, y: y + direction * 4.5)
                     }
                 }
                 FixedUsageDiamond(warning: deviation.warning, color: color, diameter: diamondDiameter, sampleTime: sampleTime)
@@ -790,10 +1059,11 @@ struct FixedUsageDiamond: View {
     }
     @ViewBuilder private func diamond(red: Bool) -> some View {
         if palette.hud {
-            UsageDiamondShape().stroke(MiniPalette.hudGreen, lineWidth: 1.5)
+            UsageDiamondShape().stroke(MiniPalette.hudGreen, lineWidth: HUDStyle.stroke * 2)
                 // Clip the outline inward to retain the calibrated ±0.4-dot outer span.
                 .clipShape(UsageDiamondShape())
                 .opacity(warning && red ? 0 : 1)
+                .hudUnit("pace-diamond", revision: warning && red ? 0 : 1, stencil: .diamond(diameter), layer: 2)
         } else {
             UsageDiamondShape().fill(red ? FlightDeck.alert : color)
                 // Keep the separator behind the fill so its visible tips retain the calibrated span.
@@ -822,10 +1092,9 @@ struct SharedRemainingTicks: View {
             let x = geometry.size.width / 2
             ForEach([0.25, 0.5, 0.75], id: \.self) { fraction in
                 let y = geometry.size.height * (1 - fraction)
-                Path { path in
-                    path.move(to: CGPoint(x: x - 2.5, y: y))
-                    path.addLine(to: CGPoint(x: x + 2.5, y: y))
-                }.stroke(palette.hud ? palette.ink : palette.muted.opacity(0.75), lineWidth: palette.hud ? 1 : 0.75)
+                Rectangle().fill(palette.hud ? palette.ink : palette.muted.opacity(0.75))
+                    .frame(width: 5, height: palette.hud ? HUDStyle.stroke : 0.75).hudUnit("remaining-tick-\(fraction)")
+                    .position(x: x, y: y)
             }
         }
     }
@@ -833,19 +1102,32 @@ struct SharedRemainingTicks: View {
 
 struct RemainingBar: View {
     @Environment(\.miniPalette) private var palette
+    @Environment(\.displayScale) private var displayScale
     let remaining: Double
     let color: Color
+    var unitID = "remaining-bar"
     var body: some View {
         GeometryReader { geometry in
             ZStack(alignment: .bottom) {
-                RoundedRectangle(cornerRadius: 2).fill(color.opacity(0.08))
+                RoundedRectangle(cornerRadius: palette.hud ? 0 : 2).fill(palette.hud ? Color.clear : color.opacity(0.08))
                 Rectangle().fill(color).frame(height: geometry.size.height * min(1, max(0, remaining / 100)))
-            }.clipShape(RoundedRectangle(cornerRadius: 2))
-                .overlay(RoundedRectangle(cornerRadius: 2).strokeBorder(palette.hud ? palette.ink : palette.muted.opacity(0.5), lineWidth: palette.hud ? 1 : 0.75))
+            }.clipShape(RoundedRectangle(cornerRadius: palette.hud ? 0 : 2))
+                .overlay(RoundedRectangle(cornerRadius: palette.hud ? 0 : 2).strokeBorder(palette.hud ? palette.ink : palette.muted.opacity(0.5), lineWidth: palette.hud ? HUDStyle.stroke : 0.75))
+                .hudUnit(unitID, revision: Int((geometry.size.height * min(1, max(0, remaining / 100)) * displayScale).rounded()))
         }.frame(width: 7, height: 64)
             .help("Actual remaining usage: \(Formats.percent(remaining)). Full height is 100%.")
             .accessibilityElement(children: .ignore).accessibilityLabel("Actual remaining usage")
             .accessibilityValue(Formats.percent(remaining))
+    }
+}
+
+private struct HUDBarLabel: View {
+    let text: String
+    let unitID: String
+    var body: some View {
+        Text(text).font(.system(size: HUDStyle.captionSize, design: .monospaced)).foregroundStyle(MiniPalette.hudGreen)
+            .fixedSize().frame(height: 10)
+            .hudTextUnit(unitID, text, size: HUDStyle.captionSize, design: .monospaced)
     }
 }
 
@@ -856,10 +1138,15 @@ struct ResetBar: View {
     let color: Color
     var body: some View {
         VStack(spacing: 4) {
-            RemainingBar(remaining: progress ?? 0, color: palette.ink)
+            RemainingBar(remaining: progress ?? 0, color: palette.ink, unitID: "reset-bar")
                 .accessibilityHidden(true)
-            Image(systemName: progress == nil ? "pause" : expired ? "arrow.clockwise" : "clock")
-                .font(.system(size: 9)).foregroundStyle(palette.muted).frame(height: 10)
+            if palette.hud {
+                HUDBarLabel(text: progress == nil ? "IDLE" : expired ? "RST" : "TTR", unitID: "reset-label")
+            } else {
+                Image(systemName: progress == nil ? "pause" : expired ? "arrow.clockwise" : "clock")
+                    .font(.system(size: 9)).foregroundStyle(palette.muted).frame(height: 10)
+                    .hudUnit("reset-icon")
+            }
         }.frame(width: 12)
             .help(progress == nil ? "The reset window has not started" : expired ? "Waiting for a new reset window" : "Time left until reset")
             .accessibilityElement(children: .ignore).accessibilityLabel("Time left until reset")

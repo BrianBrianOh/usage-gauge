@@ -91,15 +91,17 @@ struct FeatureFrame: View {
     private var scales: some View {
         HStack(spacing: 28) {
             scaleExample("Session", duration: 300, unit: .time, choices: "5 → 10 → 15 minutes")
-            scaleExample("Weekly", duration: 10080, unit: .time, choices: "2 → 4 → 8 hours")
+            scaleExample("Weekly", duration: 10080, unit: .time, choices: "2h · 4h · 8h\n1d · 2d · 4d")
             scaleExample("pp mode", duration: 10080, unit: .percentagePoints, choices: "1 → 2 → 5 pp")
         }
     }
     private func scaleExample(_ name: String, duration: Double, unit: DotUnit, choices: String) -> some View {
-        VStack(spacing: 8) {
+        let weeklyTime = duration > 300 && unit == .time
+        let selected = weeklyTime ? min(5, Int(time / 1.6)) : step
+        return VStack(spacing: 8) {
             Text(name).font(.system(size: 13, weight: .medium)).foregroundStyle(FlightDeck.ink)
-            DemoMini(remaining: 48, baseline: 50, time: time, durationMinutes: duration, unit: unit, selection: step, provider: duration == 300 ? "codex" : "claude", scope: unit == .percentagePoints ? "Fable" : nil)
-            Text(choices).font(.system(size: 10)).foregroundStyle(FlightDeck.muted)
+            DemoMini(remaining: 48, baseline: 50, time: time, durationMinutes: duration, unit: unit, selection: selected, provider: duration == 300 ? "codex" : "claude", scope: unit == .percentagePoints ? "Fable" : nil)
+            Text(choices).font(.system(size: 10)).foregroundStyle(FlightDeck.muted).multilineTextAlignment(.center).frame(height: 26)
         }.frame(maxWidth: .infinity)
     }
     private var warning: some View {

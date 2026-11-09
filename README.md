@@ -4,11 +4,13 @@
 
 Usage Gauge brings the visual language of aircraft instruments to Codex and Claude on macOS: a glideslope-inspired deviation display, detented rotary selectors, thin reference marks, and compact readouts. Keep it in a corner of your screen and see whether your remaining quota is above or below a linear budget through the next reset.
 
+It runs in the menu bar without a Dock icon. Use the menu-bar gauges to show the window, change modes, or quit the app.
+
 The cockpit influence is in the interaction, too. Your diamond stays fixed while the reference moves; the wheel changes scale one detent at a time; a direct red/service-color warning marks the upper limit. Open the full panel for history and forecasts, keep numbers beside the instrument in mini mode, or strip it down to symbols.
 
 ![Current symbol mode: Codex session, Claude weekly, and Claude Fable with percentage-point spacing](docs/demo.gif)
 
-*All GIFs render the current app views with synthetic values, including the native menus and opacity slider. They contain no account data. Motion is accelerated to make the reference bar visible.*
+*All GIFs render the current app views with synthetic values, including native controls. They contain no account data. Motion is accelerated to make the reference bar visible.*
 
 ## Window modes
 
@@ -18,7 +20,7 @@ The cockpit influence is in the interaction, too. Your diamond stays fixed while
 | --- | --- |
 | ![Codex full window: remaining quota, history graph, reset countdown, and rotary selectors](docs/full-codex.png) | ![Claude full window: weekly quota, forecast, usage breakdown, and rotary selectors](docs/full-claude.png) |
 
-**Numeric mini · 320 × 228 points.** Exact remaining quota and linear baseline on the left, the symbol instrument on the right, and reset time below. Read the numbers and your pace together in a small window you can keep on top. The instrument keeps the same wheel/click scale selection and warning as symbols-only mode; its unit and spacing stay in sync when switching modes. Normal mode supports dragging the instrument; HUD mode uses only its cursor-box handle. The opacity slider sits beside the limit selector.
+**Numeric mini · 320 × 228 points.** Exact remaining quota and linear baseline on the left, the symbol instrument on the right, and reset time below. Read the numbers and your pace together in a small window you can keep on top. The instrument keeps the same wheel/click scale selection and warning as symbols-only mode; its unit and spacing stay in sync when switching modes. Normal mode supports dragging the instrument; HUD mode uses only its corner-bracket handle. The opacity slider sits beside the limit selector.
 
 | Codex | Claude |
 | --- | --- |
@@ -37,6 +39,12 @@ The cockpit influence is in the interaction, too. Your diamond stays fixed while
 | ![Claude session symbol mode with a fully visible Session label](docs/symbols-claude-session.png) | ![Claude Fable symbol mode with a fully visible Fable label](docs/symbols-claude-fable.png) |
 
 ## Feature demos
+
+**Transparent HUD.** Green instruments in numeric and symbol modes. Each letter, digit, symbol, and bar selects one readable green tone from the actual pixels behind its ink. Controls appear on hover; the hollow diamond blinks off and on for a pace warning. The app stays in the menu bar without a Dock icon.
+
+![Numeric and symbol HUD modes with a moving light background, independent green contrast, hover controls, and hollow diamond warnings](docs/hud.gif)
+
+*The HUD demo feeds synthetic background pixels through the app's own contrast classifier. It renders the shipping views, with staged hover and warning states; it does not record a desktop.*
 
 **Time and pp scales.** Session minutes and percentage points have three wheel-selectable intervals. Weekly time has six: 2h, 4h, 8h, 1d, 2d, and 4d. The selected scale stays visible.
 
@@ -60,14 +68,15 @@ The **diamond stays at the center** and represents your current remaining quota.
 | On the diamond | Your remaining quota matches the linear budget. |
 | Below the diamond | You have more quota left than the linear budget calls for. |
 
-The center is **your current state**, not 50% remaining. The two thin vertical bars show absolute remaining quota (battery icon) and time remaining in the window (clock icon).
+The center is **your current state**, not 50% remaining. The two thin vertical bars show absolute remaining quota (battery icon, **REM** in HUD mode) and time remaining in the window (clock icon, **TTR** in HUD mode).
 
 - Time-budget mode is the default. A 5-hour session starts at **5m/dot**; a weekly window starts at **4h/dot**. Scroll over the scale to change spacing: up for finer, down for wider. Click for a selection menu.
 - Choose **`… → Dot unit → Percentage points`** to use the original **1, 2, or 5 pp/dot** scale. Time and pp selections are remembered separately, including separate session and weekly choices.
 - The selected unit **stays visible below the scale**. The small slider beside the limit name adjusts mini-window opacity from **30–100%**, with the setting saved across launches.
-- Choose **`… → HUD mode`** for green-only mini instruments on a transparent window. A single faint, centered green edge and stronger instrument outlines keep the marks readable without doubled strokes. It works in symbol and numeric mini modes and is remembered across launches. The opacity control and both menu-bar batteries also turn HUD green. The diamond is normally a bright hollow outline; pace warnings blink it fully off and on. The menu-bar menu offers the same HUD toggle and restores normal battery colors when HUD is turned off.
-- **`… → Automatic contrast`** reads the background beneath the mini HUD only, excluding Usage Gauge's own windows. Each word or instrument unit uses one solid bright or dark green, keeping background textures from splitting its strokes. The center instrument and scale label share a tone; the two remaining bars and their icons share another. A small hysteresis band prevents rapid switching near the brightness threshold. The menu-bar batteries keep their fixed HUD green. A cropped, event-driven stream supports up to 30 updates per second; idle frames and unchanged tone decisions are skipped, and classification runs off the main thread. Screen Recording permission is required. Only cropped images are processed in memory; no screen images or audio are saved or transmitted. Without permission, the HUD keeps its bright green and offers **Allow background access…** in the options menu.
-- In HUD mode, the scroll target is the diamond's bounding square, including its hollow center. A nearly invisible input surface keeps that empty center interactive. Only the small cursor box between the service name and options moves the window. Service names remain clickable, while dragging a name, the diamond, the scale label, or the background does not move the HUD.
+- Choose **`… → HUD mode`** for green-only mini instruments on a transparent window. Uppercase monospaced service and window labels, square-ended bars, and a consistent thin stroke keep the display compact. The reference bar is slightly heavier. The bar captions are **REM** (remaining usage) and **TTR** (time to reset), with IDLE/RST when appropriate. Hover over the two top rows to reveal the options and opacity controls; they stay visible while the opacity slider is being dragged. Numeric HUD controls use short SYM, PIN, and FULL labels. A single faint, centered green edge keeps the marks readable without doubled strokes. HUD works in symbol and numeric mini modes and is remembered across launches. The opacity control and both menu-bar batteries also turn HUD green. The diamond is normally a bright hollow outline; pace warnings blink it fully off and on. The menu-bar menu offers the same HUD toggle and restores normal battery colors when HUD is turned off.
+- HUD service marks use shape as well as presence: a small dot means normal limits, an outlined square means warning, a filled square means critical, and a short dash means unavailable or stale data. In symbol mode the mark beside the service name describes the other service; its tooltip names that service and its state. Numeric mode shows a mark beside each service.
+- **`… → Automatic contrast`** reads the background beneath the mini HUD only, excluding Usage Gauge's own windows. It compares the two green tones' contrast at the actual ink pixels of each letter, digit, symbol, or individual bar, with one solid tone per entity. This avoids letting a little white background overwhelm a letter mostly overlapping black text. Empty glyph space, the hollow diamond center, and transparent input surfaces do not contribute. Overlapping symbols retain their visible drawing order. The app caches its own foreground coverage when text or instrument geometry changes; background frames reuse that coverage. A small hysteresis band prevents rapid switching when the contrast preferences are close. The menu-bar batteries keep their fixed HUD green. A cropped, event-driven stream supports up to 30 updates per second; idle frames and unchanged tone decisions are skipped, and classification runs off the main thread. Screen Recording permission is required. Only cropped images are processed in memory; no screen images or audio are saved or transmitted. Without permission, the HUD keeps its bright green and offers **Allow background access…** in the options menu.
+- In HUD mode, the scroll target is the diamond's bounding square, including its hollow center. A nearly invisible input surface keeps that empty center interactive. Four open corner brackets between the service name and options form the drag handle. Only their interior moves the window, and the brackets brighten slightly while hovered. Service names remain clickable, while dragging a name, the diamond, the scale label, or the background does not move the HUD.
 - In normal mode, **drag the dot scale or its bottom label to move the window.** A click on the scale without dragging opens the spacing menu. Buttons and the opacity slider retain their own actions.
 - Two dots above and below the center cross define the equally spaced difference scale.
 - The diamond's top and bottom mark ±0.4 dot around the center: ±2 equivalent budget minutes at 5m/dot. Its full height is 80% of one dot interval, so its reading band changes with the selected scale.
@@ -109,7 +118,9 @@ ditto "dist/Usage Gauge.app" "$HOME/Applications/Usage Gauge.app"
 open "$HOME/Applications/Usage Gauge.app"
 ```
 
-This initial release is source-first. Local builds are ad-hoc signed, not Developer ID signed or notarized. No prebuilt installer is published.
+The [latest release](https://github.com/BrianBrianOh/usage-gauge/releases/latest) includes a ZIP of the app for **Apple Silicon** and a SHA-256 checksum. Extract the ZIP and move **Usage Gauge.app** to Applications. Intel users can build from source; that configuration has not been tested.
+
+Builds are ad-hoc signed, not Developer ID signed or notarized. macOS may require you to approve the downloaded app in **System Settings → Privacy & Security**. Rebuilding or replacing an ad-hoc signed app may also require reconnecting its Screen Recording permission for HUD automatic contrast.
 
 ## Connect your accounts
 
@@ -157,9 +168,10 @@ zsh native/build.sh
 "dist/Usage Gauge.app/Contents/MacOS/UsageGauge" --self-test
 python3 tools/check_publication.py
 zsh tools/generate-demo.sh
+zsh tools/generate-hud-demo.sh
 zsh tools/generate-screenshots.sh
 ```
 
-The tests cover account/cycle isolation, Claude retry and account-switch handling, quota parsing, forecasts, time and vertical scales, mini-window placement, time-budget conversion, dot spacing, warning boundaries, and binary warning timing. Both documentation generators host the actual app views off screen with the same compile-time in-memory model and native controls. GIFs use a fixed animation sample time for the binary warning. Stills include full, numeric mini, and symbol windows, with Claude session, weekly, and Fable examples. Neither generator captures the desktop, loads preferences, reads accounts, or starts collectors.
+The tests cover account/cycle isolation, Claude retry and account-switch handling, quota parsing, forecasts, time and vertical scales, mini-window placement, time-budget conversion, dot spacing, warning boundaries, binary warning timing, and HUD ink masks. Documentation generators host the actual app views off screen with the same compile-time in-memory model and native controls. GIFs use a fixed animation sample time for the binary warning. The HUD generator also verifies quarter-tick alignment and uses the shipping contrast classifier on synthetic background pixels. Stills include full, numeric mini, and symbol windows, with Claude session, weekly, and Fable examples. Generators do not capture the desktop, load preferences, read accounts, or start collectors.
 
 Licensed under [MIT](LICENSE).

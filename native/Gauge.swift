@@ -240,6 +240,7 @@ typealias UsageModel = ScreenshotModel
         didSet { UserDefaults.standard.set(miniAutoContrast, forKey: "miniAutoContrast"); onChange?() }
     }
     @Published var hudContrastMap: NSImage?
+    @Published var hudControlsHovered = false
     @Published var hudContrastUnits: [HUDContrastUnit] = [] {
         didSet { if hudContrastUnits != oldValue { onHUDContrastUnitsChanged?(hudContrastUnits) } }
     }
@@ -780,9 +781,12 @@ enum StatusBattery {
     var wakeObserver: NSObjectProtocol?
     var screenObserver: NSObjectProtocol?
     var contrastController: HUDContrastController?
+    private var hudInkRefreshScheduled = false
+    private var hudInkCapturedUnits: [HUDContrastUnit] = []
+    private var hudInkCapturedScale: CGFloat = 0
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.regular)
+        NSApp.setActivationPolicy(.accessory)
         NSApp.appearance = NSAppearance(named: .darkAqua)
         let appMenu = NSMenu()
         let menu = NSMenu(); let appItem = NSMenuItem(); appItem.submenu = menu; appMenu.addItem(appItem)
@@ -835,11 +839,11 @@ enum StatusBattery {
             onStatus: { [weak self] status in self?.model.hudContrastStatus = status },
             onUserStop: { [weak self] in self?.model.miniAutoContrast = false })
         model.onRequestHUDContrastPermission = { [weak self] in self?.contrastController?.requestPermission() }
-        model.onHUDContrastUnitsChanged = { [weak self] units in self?.contrastController?.setUnits(units) }
-        contrastController?.setUnits(model.hudContrastUnits)
+        model.onHUDContrastUnitsChanged = { [weak self] _ in self?.scheduleHUDInkRefresh() }
+        scheduleHUDInkRefresh()
         screenObserver = NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
             object: nil, queue: .main) { [weak self] _ in
-                Task { @MainActor in self?.contrastController?.geometryChanged() }
+                Task { @MainActor in self?.contrastController?.geometryChanged(); self?.scheduleHUDInkRefresh() }
             }
         updateChrome(); showWindow(); model.start()
         wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
@@ -853,6 +857,7 @@ enum StatusBattery {
         miniWindow?.hasShadow = !model.miniHUD
         miniWindow?.isMovableByWindowBackground = !model.miniHUD
         miniWindow?.invalidateShadow()
+        (miniWindow?.contentView as? MiniHostingView)?.updateTrackingAreas()
         if let panel = miniWindow, panel.frame.size != MiniLayout.size(symbols: model.miniSymbols), let screen = panel.screen ?? NSScreen.main {
             panel.setFrame(MiniLayout.resized(panel.frame, to: MiniLayout.size(symbols: model.miniSymbols), in: screen.visibleFrame), display: true)
             panel.saveFrame(usingName: "UsageGaugeMiniWindow")
@@ -867,6 +872,30 @@ enum StatusBattery {
         }
         updateStatusImage()
         contrastController?.setEnabled(model.miniHUD && model.miniAutoContrast && model.miniMode)
+        scheduleHUDInkRefresh()
+    }
+    /// Cache the owned view's alpha only when glyphs or instrument geometry change.
+    private func scheduleHUDInkRefresh() {
+        guard model.miniHUD, model.miniAutoContrast, model.miniMode, !hudInkRefreshScheduled else { return }
+        hudInkRefreshScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            defer { self.hudInkRefreshScheduled = false }
+            guard self.model.miniHUD, self.model.miniAutoContrast, self.model.miniMode,
+                  let panel = self.miniWindow, let host = panel.contentView, !self.model.hudContrastUnits.isEmpty else { return }
+            host.layoutSubtreeIfNeeded()
+            let size = host.bounds.size, scale = panel.screen?.backingScaleFactor ?? 2
+            guard self.hudInkCapturedUnits != self.model.hudContrastUnits || self.hudInkCapturedScale != scale else { return }
+            guard let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil,
+                pixelsWide: max(1, Int((size.width * scale).rounded())), pixelsHigh: max(1, Int((size.height * scale).rounded())),
+                bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 32) else { return }
+            if let pixels = bitmap.bitmapData { memset(pixels, 0, bitmap.bytesPerRow * bitmap.pixelsHigh) }
+            bitmap.size = size; host.cacheDisplay(in: host.bounds, to: bitmap)
+            let atlas = HUDInkAtlas.make(bitmap: bitmap, pointSize: size, units: self.model.hudContrastUnits)
+            self.hudInkCapturedUnits = self.model.hudContrastUnits; self.hudInkCapturedScale = scale
+            self.contrastController?.setInkAtlas(atlas)
+        }
     }
     private func updateStatusImage() {
         guard let button = statusItem?.button else { return }
@@ -896,10 +925,10 @@ enum StatusBattery {
         return result
     }
     func windowDidMove(_ notification: Notification) {
-        if notification.object as? NSWindow === miniWindow { contrastController?.geometryChanged(.mini) }
+        if notification.object as? NSWindow === miniWindow { contrastController?.geometryChanged(.mini); scheduleHUDInkRefresh() }
     }
     func windowDidResize(_ notification: Notification) {
-        if notification.object as? NSWindow === miniWindow { contrastController?.geometryChanged(.mini) }
+        if notification.object as? NSWindow === miniWindow { contrastController?.geometryChanged(.mini); scheduleHUDInkRefresh() }
     }
     func moveMini(to corner: MiniCorner) {
         guard let panel = miniWindow, let screen = panel.screen ?? window?.screen ?? NSScreen.main else { return }
