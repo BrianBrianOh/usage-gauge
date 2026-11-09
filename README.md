@@ -63,7 +63,11 @@ The [v0.4 design notes](docs/design-v0.4.md) record the public human-engineering
 
 *The HUD demo feeds synthetic background pixels through the app's own contrast classifier. It renders the shipping views, with staged hover and warning states; it does not record a desktop.*
 
-**Time and pp scales.** Session minutes and percentage points have three wheel-selectable intervals. Weekly time has six: 2h, 4h, 8h, 1d, 2d, and 4d. The selected scale stays visible.
+**Low reserves.** Normal and HUD symbol modes replace REM with a percentage below 10%. Integer values round down, positive reserves below one percent show `<1%`, and only an actual zero shows `0%`. Numeric mini retains its existing exact readout. Stale and unavailable readings keep their validity indications.
+
+![Normal and HUD symbol modes crossing the ten-percent threshold, showing a reserve below one percent, and reaching a real zero](docs/low-reserve.gif)
+
+**Time and pp scales.** Session minutes and percentage points have three wheel-selectable intervals. Weekly time has six: 2HR, 4HR, 8HR, 1DAY, 2DAY, and 4DAY. The selected scale stays visible.
 
 ![Changing session, weekly, and percentage-point dot spacing](docs/scales.gif)
 
@@ -85,9 +89,9 @@ The **diamond stays at the center** and represents your current remaining quota.
 | On the diamond | Your remaining quota matches the linear budget. |
 | Below the diamond | You have more quota left than the linear budget calls for. |
 
-The center is **your current state**, not 50% remaining. The two thin vertical bars show absolute remaining quota (battery icon, **REM** in HUD mode) and time remaining in the window (clock icon, **TTR** in HUD mode).
+The center is **your current state**, not 50% remaining. The two thin vertical bars show absolute remaining quota (**REM**) and time remaining in the window (**TTR**). In normal and HUD symbol modes, a valid remaining quota below 10% replaces REM with a compact percentage, rounded down: `8%`, `<1%` below one percent, and `0%` only for an actual zero. Numeric mini keeps REM because its exact percentage is already displayed beside the instrument. Stale and unavailable data retain their existing validity indications.
 
-- Time-budget mode is the default. A 5-hour session starts at **5m/dot**; a weekly window starts at **4h/dot**. Scroll over the scale to change spacing: up for finer, down for wider. Click for a selection menu.
+- Time-budget mode is the default. A 5-hour session starts at **5MIN/dot**; a weekly window starts at **4HR/dot**. Scroll over the scale to change spacing: up for finer, down for wider. Click for a selection menu.
 - Choose **`… → Dot unit → Percentage points`** to use the original **1, 2, or 5 pp/dot** scale. Time and pp selections are remembered separately, including separate session and weekly choices.
 - The selected unit **stays visible below the scale**. The small slider beside the limit name adjusts mini-window opacity from **30–100%**, with the setting saved across launches.
 - Choose **`… → HUD mode`** for green-only mini instruments on a transparent window. Uppercase monospaced service and window labels, square-ended bars, and a consistent thin stroke keep the display compact. The reference bar is slightly heavier. The bar captions are **REM** (remaining usage) and **TTR** (time to reset), with IDLE/RST when appropriate. Hover over the two top rows to reveal the options and opacity controls; they stay visible while the opacity slider is being dragged. Numeric HUD controls use short SYM, PIN, and FULL labels. A single faint, centered green edge keeps the marks readable without doubled strokes. HUD works in symbol and numeric mini modes and is remembered across launches. The opacity control and both menu-bar batteries also turn HUD green. The diamond is normally a bright hollow outline; pace warnings blink it fully off and on. The menu-bar menu offers the same HUD toggle and restores normal battery colors when HUD is turned off.
@@ -96,8 +100,8 @@ The center is **your current state**, not 50% remaining. The two thin vertical b
 - In HUD mode, the scroll target is the diamond's bounding square, including its hollow center. A nearly invisible input surface keeps that empty center interactive. Four open corner brackets between the service name and options form the drag handle. Only their interior moves the window, and the brackets brighten slightly while hovered. Service names remain clickable, while dragging a name, the diamond, the scale label, or the background does not move the HUD.
 - In normal mode, **drag the dot scale or its bottom label to move the window.** A click on the scale without dragging opens the spacing menu. Buttons and the opacity slider retain their own actions.
 - Two dots above and below the center cross define the equally spaced difference scale.
-- The diamond's top and bottom mark ±0.4 dot around the center: ±2 equivalent budget minutes at 5m/dot. Its full height is 80% of one dot interval, so its reading band changes with the selected scale.
-- The bottom scale label stays short (`5m`, `2h`, or `2pp`); the menu and tooltip explain the per-dot spacing.
+- The diamond's top and bottom mark ±0.4 dot around the center: ±2 equivalent budget minutes at 5MIN/dot. Its full height is 80% of one dot interval, so its reading band changes with the selected scale.
+- Compact time labels use `5MIN`, `8HR`, or `4DAY`; time-range selectors and elapsed-age labels use the same MIN/HR/DAY abbreviations. Percentage-point labels stay `2pp`. The menu and tooltip explain the per-dot spacing.
 - The difference scale sits to the left of the diamond. Between the usage and time bars, a separate shared scale marks 25%, 50%, and 75% with identical short horizontal ticks; each bar runs from 0% at the bottom to 100% at the top.
 - At the upper limit, the diamond alternates between the service color and red every **0.8 seconds**, without fading. A chevron marks values beyond the scale. The warning threshold follows the selected unit and spacing; it is not a provider-defined quota alert.
 - With macOS Reduce Motion enabled, the warning is steady red in normal mode or a steady hollow green diamond in HUD mode. An unavailable or stale observation pauses the warning and shows a status icon.
@@ -108,8 +112,8 @@ The full window adds history, a consumption forecast when enough observations ex
 
 | Scale | Default | Wheel choices | Range at default |
 | --- | --- | --- | --- |
-| Session (5 hours) | **5m/dot** | 5, 10, 15 minutes | ±10 minutes |
-| Weekly | **4h/dot** | 2h, 4h, 8h, 1d, 2d, 4d | ±8 hours |
+| Session (5 hours) | **5MIN/dot** | 5MIN, 10MIN, 15MIN | ±10 minutes |
+| Weekly | **4HR/dot** | 2HR, 4HR, 8HR, 1DAY, 2DAY, 4DAY | ±8 hours |
 | Percentage points | 2 pp/dot | 1, 2, 5 pp | ±4 pp |
 
 Time means **equivalent consumption ahead of or behind the linear budget**. For example, a reference bar 10 minutes above center means you have used 10 minutes' worth of the linear budget early. It does not mean the quota will run out 10 minutes early. Other window durations use minute choices below one day and hour choices from one day onward, converted using their actual duration.

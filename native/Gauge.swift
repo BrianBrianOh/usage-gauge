@@ -186,9 +186,9 @@ enum Formats {
     static func percent(_ number: Double) -> String { String(format: number.rounded() == number ? "%.0f%%" : "%.1f%%", number) }
     static func duration(_ seconds: Double) -> String {
         let minutes = max(0, Int(seconds / 60)), hours = minutes / 60
-        if hours >= 24 { return "\(hours / 24)d \(hours % 24)h" }
-        if hours > 0 { return "\(hours)h \(minutes % 60)m" }
-        return "\(minutes)m"
+        if hours >= 24 { return "\(hours / 24)DAY" + (hours % 24 == 0 ? "" : " \(hours % 24)HR") }
+        if hours > 0 { return "\(hours)HR" + (minutes % 60 == 0 ? "" : " \(minutes % 60)MIN") }
+        return "\(minutes)MIN"
     }
 }
 
@@ -1169,8 +1169,8 @@ enum StatusBattery {
             precondition(DotScale.points(-1) == 1 && DotScale.points(3) == 5)
             let sessionScale = DotScale(unit: .time, durationMinutes: 300, index: DotScale.defaultIndex(unit: .time, durationMinutes: 300))
             let weeklyScale = DotScale(unit: .time, durationMinutes: 10080, index: DotScale.defaultIndex(unit: .time, durationMinutes: 10080))
-            precondition(sessionScale.caption == "5m/dot" && sessionScale.options == [5, 10, 15] && sessionScale.limitText == "10 minutes")
-            precondition(weeklyScale.caption == "4h/dot" && weeklyScale.options == DotScale.weeklyMinutes && weeklyScale.limitText == "8 hours")
+            precondition(sessionScale.caption == "5MIN/dot" && sessionScale.options == [5, 10, 15] && sessionScale.limitText == "10 minutes")
+            precondition(weeklyScale.caption == "4HR/dot" && weeklyScale.options == DotScale.weeklyMinutes && weeklyScale.limitText == "8 hours")
             for duration in [300.0, 10080.0] {
                 for index in 0..<(duration >= 1440 ? DotScale.weeklyMinutes.count : 3) {
                     let scale = DotScale(unit: .time, durationMinutes: duration, index: index)
@@ -1185,7 +1185,15 @@ enum StatusBattery {
                 }
             }
             precondition(DotScale(unit: .percentagePoints, durationMinutes: 10080, index: 1).caption == "2 pp/dot")
-            precondition((0..<6).map { DotScale(unit: .time, durationMinutes: 10080, index: $0).compactCaption } == ["2h", "4h", "8h", "1d", "2d", "4d"])
+            precondition((0..<6).map { DotScale(unit: .time, durationMinutes: 10080, index: $0).compactCaption } == ["2HR", "4HR", "8HR", "1DAY", "2DAY", "4DAY"])
+            for (value, expected) in [(0.0, "0%"), (0.4, "<1%"), (0.99, "<1%"), (1.0, "1%"), (8.7, "8%"), (9.99, "9%"), (10.0, "REM"), (100.0, "REM")] {
+                precondition(InstrumentCaption.remaining(value, symbols: true, condition: .live) == expected)
+            }
+            for condition in [DataCondition.stale, .resetPending, .authentication, .invalid, .unavailable] {
+                precondition(InstrumentCaption.remaining(8, symbols: true, condition: condition) == "REM")
+            }
+            precondition(InstrumentCaption.remaining(8, symbols: false, condition: .live) == "REM")
+            precondition(Formats.duration(300) == "5MIN" && Formats.duration(28800) == "8HR" && Formats.duration(345600) == "4DAY")
             precondition(DotScale(unit: .time, durationMinutes: 10080, index: 5).diamondHalfSpanText == "1 day 14 hours 24 minutes")
             precondition(WarningFlash.isRed(at: 0) && WarningFlash.isRed(at: 0.799))
             precondition(!WarningFlash.isRed(at: 0.8) && !WarningFlash.isRed(at: 1.599) && WarningFlash.isRed(at: 1.6))

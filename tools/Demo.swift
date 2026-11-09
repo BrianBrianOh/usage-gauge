@@ -8,12 +8,13 @@ struct DemoMini: View {
     let model: ScreenshotModel
     let windowOpacity: Double
     init(remaining: Double, baseline: Double, time: Double, durationMinutes: Double, unit: DotUnit,
-         selection: Int? = nil, windowOpacity: Double = 1, provider: String = "codex", scope: String? = nil) {
+         selection: Int? = nil, windowOpacity: Double = 1, provider: String = "codex", scope: String? = nil, hud: Bool = false) {
         let model = ScreenshotModel()
         model.configureSymbol(provider: provider, scope: scope, remaining: remaining, baseline: baseline,
             durationMinutes: durationMinutes, unit: unit,
             index: selection ?? DotScale.defaultIndex(unit: unit, durationMinutes: durationMinutes),
             opacity: windowOpacity, time: time)
+        model.miniHUD = hud
         self.model = model; self.windowOpacity = windowOpacity
     }
     var body: some View { MiniView(model: model).opacity(windowOpacity) }
@@ -45,7 +46,7 @@ struct DemoFrame: View {
 }
 
 enum DemoScene: String, CaseIterable {
-    case overview = "demo", scales, warning, opacity, validity = "data-validity"
+    case overview = "demo", scales, warning, opacity, validity = "data-validity", reserve = "low-reserve"
     var title: String {
         switch self {
         case .overview: return "Usage Gauge"
@@ -53,6 +54,7 @@ enum DemoScene: String, CaseIterable {
         case .warning: return "Budget warning"
         case .opacity: return "Dragging and opacity"
         case .validity: return "Data validity"
+        case .reserve: return "Low reserve, in numbers"
         }
     }
 }
@@ -72,6 +74,7 @@ struct FeatureFrame: View {
                 case .warning: warning
                 case .opacity: desktop
                 case .validity: validity
+                case .reserve: reserve
                 case .overview: EmptyView()
                 }
             }.frame(height: scene == .validity ? 270 : 206).padding(.top, 22)
@@ -88,13 +91,14 @@ struct FeatureFrame: View {
         case .warning: return "The reference rises as consumption gets ahead of the linear budget"
         case .opacity: return "Drag the instrument or its label · Adjust opacity beside the limit name"
         case .validity: return "N/A and static hatching distinguish missing data from a real zero"
+        case .reserve: return "Below 10%, symbol modes show the percentage beneath the remaining bar"
         case .overview: return ""
         }
     }
     private var scales: some View {
         HStack(spacing: 28) {
             scaleExample("Session", duration: 300, unit: .time, choices: "5 → 10 → 15 minutes")
-            scaleExample("Weekly", duration: 10080, unit: .time, choices: "2h · 4h · 8h\n1d · 2d · 4d")
+            scaleExample("Weekly", duration: 10080, unit: .time, choices: "2HR · 4HR · 8HR\n1DAY · 2DAY · 4DAY")
             scaleExample("pp mode", duration: 10080, unit: .percentagePoints, choices: "1 → 2 → 5 pp")
         }
     }
@@ -112,6 +116,23 @@ struct FeatureFrame: View {
             Text(condition.token + " / " + condition.detail).font(FlightDeck.label(9)).foregroundStyle(FlightDeck.muted)
                 .lineLimit(2).frame(height: 26, alignment: .topLeading)
         }
+    }
+    private var reserve: some View {
+        HStack(spacing: 28) {
+            reserveExample("Normal", values: [10, 9.9, 8.7], duration: 300, selection: 0, hud: false, note: "REM → 9% → 8%")
+            reserveExample("HUD · Below 1%", values: [1.1, 0.9, 0.4], duration: 10080, selection: 2, hud: true, note: "Positive reserve: <1%")
+            reserveExample("HUD · Actual zero", values: [1, 0.4, 0], duration: 10080, selection: 5, hud: true, note: "Only a real zero: 0%")
+        }
+    }
+    private func reserveExample(_ title: String, values: [Double], duration: Double, selection: Int, hud: Bool, note: String) -> some View {
+        let remaining = values[step]
+        return VStack(spacing: 8) {
+            Text(title).font(.system(size: 12, weight: .medium)).foregroundStyle(FlightDeck.ink)
+            // Keep a current window even at zero; the label, rather than pace warning, is the subject.
+            DemoMini(remaining: remaining, baseline: remaining + 0.1, time: time, durationMinutes: duration,
+                     unit: .time, selection: selection, hud: hud)
+            Text(note).font(.system(size: 9)).foregroundStyle(FlightDeck.muted)
+        }.frame(maxWidth: .infinity)
     }
     private func scaleExample(_ name: String, duration: Double, unit: DotUnit, choices: String) -> some View {
         let weeklyTime = duration > 300 && unit == .time

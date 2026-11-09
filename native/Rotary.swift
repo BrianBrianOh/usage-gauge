@@ -3,7 +3,7 @@ import SwiftUI
 
 enum GaugeScale {
     static let spans: [Double?] = [3600, 21600, 86400, 259200, nil]
-    static let spanLabels = ["1H", "6H", "24H", "3D", "ALL"]
+    static let spanLabels = ["1HR", "6HR", "24HR", "3DAY", "ALL"]
     static let spanNames = ["Past hour", "Past 6 hours", "Past 24 hours", "Past 3 days", "Full cycle"]
     static let steps: [Double] = [0.1, 0.2, 0.5, 1, 2]
     static let stepLabels = ["0.1", "0.2", "0.5", "1", "2"]
@@ -139,7 +139,10 @@ final class DetentKnob: NSControl {
             let p = point(Double(i), radius: 50)
             let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedSystemFont(ofSize: 10, weight: i == selection ? .medium : .regular), .foregroundColor: i == selection ? accent : NSColor(white: 0.72, alpha: 1)]
             let text = labels[i] as NSString, size = text.size(withAttributes: attributes)
-            text.draw(at: NSPoint(x: p.x - size.width / 2, y: p.y - size.height / 2), withAttributes: attributes)
+            // Leave the side ticks clear of longer unit labels such as 3DAY.
+            let direction = cos(angle(Double(i)))
+            let offset: CGFloat = abs(direction) < 0.2 ? 0 : direction > 0 ? 8 : -8
+            text.draw(at: NSPoint(x: p.x - size.width / 2 + offset, y: p.y - size.height / 2), withAttributes: attributes)
         }
         let knob = NSBezierPath(ovalIn: NSRect(x: c.x - 28, y: c.y - 28, width: 56, height: 56))
         NSColor(white: 0.10, alpha: 1).setFill(); knob.fill()

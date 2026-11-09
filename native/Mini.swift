@@ -24,6 +24,16 @@ enum HUDStyle {
     static let captionSize: CGFloat = 8
 }
 
+enum InstrumentCaption {
+    static func remaining(_ value: Double, symbols: Bool, condition: DataCondition) -> String {
+        guard symbols, condition == .live || condition == .idle,
+              value.isFinite, value >= 0, value < 10 else { return "REM" }
+        if value == 0 { return "0%" }
+        if value < 1 { return "<1%" }
+        return "\(Int(value.rounded(.down)))%"
+    }
+}
+
 enum HUDServiceHealth: Int {
     case unavailable, normal, warning, critical
     var label: String {
@@ -627,6 +637,7 @@ struct MiniView: View {
     private func symbols(_ quota: Quota, now: Date) -> some View {
         let time = now.timeIntervalSince1970
         let condition = model.availability(now: time).condition
+        let remainingCaption = InstrumentCaption.remaining(quota.remaining, symbols: model.miniSymbols, condition: condition)
         let baseline = condition.permitsReference ? quota.baseline(time) : nil
         let expired = !quota.isIdle && time >= quota.resetAt
         return HStack(alignment: .top, spacing: 6) {
@@ -663,7 +674,8 @@ struct MiniView: View {
                 VStack(spacing: 4) {
                 // Capacity takes the limit-risk colour; the diamond keeps reporting pace.
                 RemainingBar(remaining: quota.remaining, color: palette.hud ? palette.ink : condition.permitsReference ? quota.limitRisk(now: time)?.color ?? palette.ink : FlightDeck.caution, unitID: "usage-bar")
-                HUDBarLabel(text: "REM", unitID: "usage-label").help(condition.isLastKnown ? "Last observed remaining usage" : "Remaining usage").accessibilityHidden(true)
+                HUDBarLabel(text: remainingCaption, unitID: "usage-label")
+                    .help((condition.isLastKnown ? "Last observed remaining usage: " : "Remaining usage: ") + Formats.percent(quota.remaining)).accessibilityHidden(true)
                 }.frame(width: 12)
                 ResetBar(progress: baseline, expired: expired, color: palette.tint(model.accent))
             }
@@ -874,10 +886,13 @@ struct DotScale {
     var pointsPerDot: Double { unit == .percentagePoints ? options[index] : options[index] * 100 / durationMinutes }
     var caption: String {
         if unit == .percentagePoints { return "\(Int(options[index])) pp/dot" }
-        if options[index] >= 1440 { return "\(Int(options[index] / 1440))d/dot" }
-        return Self.isLongWindow(durationMinutes) ? "\(Int(options[index] / 60))h/dot" : "\(Int(options[index]))m/dot"
+        return compactCaption + "/dot"
     }
-    var compactCaption: String { caption.replacingOccurrences(of: "/dot", with: "").replacingOccurrences(of: " ", with: "") }
+    var compactCaption: String {
+        if unit == .percentagePoints { return "\(Int(options[index]))pp" }
+        if options[index] >= 1440 { return "\(Int(options[index] / 1440))DAY" }
+        return Self.isLongWindow(durationMinutes) ? "\(Int(options[index] / 60))HR" : "\(Int(options[index]))MIN"
+    }
     private func quantity(_ value: Double) -> String {
         if unit == .percentagePoints {
             let amount = value == value.rounded() ? String(Int(value)) : String(format: "%.1f", value)
