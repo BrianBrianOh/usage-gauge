@@ -137,10 +137,18 @@ struct HUDInkAtlas: Equatable {
         for unit in units.sorted(by: { $0.layer == $1.layer ? $0.id < $1.id : $0.layer < $1.layer }) {
             if case .diamond = unit.stencil, unit.revision == 0 { continue }
             let cells = unit.text?.characters(in: unit.rect, id: unit.id) ?? [(unit.id, unit.rect)]
+            let rows = Dictionary(grouping: cells, by: { $0.1.minY }).mapValues { row in
+                (left: row.map { $0.1.minX }.min()!, right: row.map { $0.1.maxX }.max()!)
+            }
             for (id, cell) in cells {
                 // Adjacent text cells share a rounded boundary, so no character gets split colors.
-                let left = max(0, min(width, Int((cell.minX * sx).rounded())))
-                let right = max(left, min(width, Int((cell.maxX * sx).rounded())))
+                // At the outer edges, native text antialiasing can extend one device pixel
+                // beyond the advance. Include it without moving any internal boundary.
+                let row = rows[cell.minY]!
+                let leading = unit.text != nil && cell.minX == row.left ? 1 : 0
+                let trailing = unit.text != nil && cell.maxX == row.right ? 1 : 0
+                let left = max(0, min(width, Int((cell.minX * sx).rounded()) - leading))
+                let right = max(left, min(width, Int((cell.maxX * sx).rounded()) + trailing))
                 let top = max(0, min(height, Int(floor(cell.minY * sy))))
                 let bottom = max(top, min(height, Int(ceil(cell.maxY * sy))))
                 var pixels: [Int] = [], weights: [UInt8] = []

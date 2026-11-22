@@ -516,8 +516,9 @@ struct MiniView: View {
                     .accessibilityLabel("Limit").accessibilityValue(symbolTitle(quota))
                     .help("Select limit: \(symbolTitle(quota))")
                     .hudHitArea(model.miniHUD)
-                    .hudTextUnit("limit", title, size: 10, design: .monospaced,
-                        trailingSymbol: model.miniSymbols ? nil : "⌄")
+                    // The native menu title starts 3pt inside the button. Its hidden indicator
+                    // takes no title space; reserving it compressed the numeric HUD's cells.
+                    .hudTextUnit("limit", title, size: 10, design: .monospaced, insetX: 3)
             } else { Text(title).font(.system(size: 10, design: .monospaced))
                 .hudTextUnit("limit", title, size: 10, design: .monospaced) }
             if let constraint = model.activeSnapshot.sharedConstraints(for: quota, now: Date().timeIntervalSince1970).first {

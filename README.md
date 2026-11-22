@@ -6,6 +6,8 @@ Usage Gauge brings the visual language of aircraft instruments to Codex and Clau
 
 It runs in the menu bar without a Dock icon. Use the menu-bar gauges to show the window, change modes, or quit the app.
 
+The Claude menu-bar battery (`C`) shows the lower remaining percentage across the active five-hour and all-model weekly windows. Hover over it to see which window supplied the number. You can check model-specific limits such as Fable in the window selector.
+
 The cockpit influence is in the interaction, too. Your diamond stays fixed while the reference moves; the wheel changes scale one detent at a time; a direct red/service-color warning marks the upper limit. Open the full panel for history and forecasts, keep numbers beside the instrument in mini mode, or strip it down to symbols.
 
 ![Current symbol mode: Codex session, Claude weekly, and Claude Fable with percentage-point spacing](docs/demo.gif)

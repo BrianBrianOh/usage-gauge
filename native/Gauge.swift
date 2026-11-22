@@ -103,7 +103,17 @@ extension Quota {
 extension Snapshot {
     /// The limit a compact indicator shows: the server's pick, else the tightest started window.
     var glance: Quota? {
-        windows.first { $0.active == true } ?? windows.filter { !$0.isIdle }.min { $0.remaining < $1.remaining } ?? windows.first
+        windows.first { $0.active == true } ?? tightestStarted
+    }
+    var tightestStarted: Quota? {
+        windows.filter { !$0.isIdle }.min { $0.remaining < $1.remaining } ?? windows.first
+    }
+    /// The menu bar represents the whole Claude account. A scoped meter can be
+    /// active or exhausted while other models remain available.
+    var claudeAccountLimits: Snapshot {
+        var account = self
+        account.windows = windows.filter { $0.id == "claude:five_hour" || $0.id == "claude:seven_day" }
+        return account
     }
     /// The most serious limit at risk, tightest first: what a glance at this service should report.
     func riskiest(now: Double) -> (quota: Quota, risk: LimitRisk)? {
@@ -977,21 +987,24 @@ enum StatusBattery {
         guard let button = statusItem?.button else { return }
         // Both services always report: G for Codex (GPT), C for Claude.
         let now = Date().timeIntervalSince1970
-        let services = [(letter: "G", name: "Codex", snapshot: model.snapshot), (letter: "C", name: "Claude", snapshot: model.claudeSnapshot)]
-        let gauges = services.map { service in
-            let status = DataAvailability.evaluate(snapshot: service.snapshot, quota: service.snapshot.glance, refreshing: false, interval: model.interval, now: now)
-            let valid = status.condition == .live || status.condition == .idle
-            return StatusBattery.Gauge(letter: service.letter, remaining: valid ? service.snapshot.glance?.remaining : nil,
-                risk: valid ? service.snapshot.riskiest(now: now)?.risk : nil, failed: !valid)
-        }
-        let summaries = services.map { service -> String in
-            let quota = service.snapshot.glance
+        let claude = model.claudeSnapshot.claudeAccountLimits
+        let services = [(letter: "G", name: "Codex", snapshot: model.snapshot, quota: model.snapshot.glance),
+                        (letter: "C", name: "Claude", snapshot: claude, quota: claude.tightestStarted)]
+        let readings = services.map { service in
+            let quota = service.quota
             let status = DataAvailability.evaluate(snapshot: service.snapshot, quota: quota, refreshing: false, interval: model.interval, now: now)
-            return service.name + " · " + status.condition.token + " · " + status.condition.detail
-                + (status.condition.permitsObservation ? quota.map { " Last observation " + Formats.percent($0.remaining) + " at " + Formats.date($0.observedAt) } ?? "" : "")
+            let valid = status.condition == .live || status.condition == .idle
+            let gauge = StatusBattery.Gauge(letter: service.letter, remaining: valid ? quota?.remaining : nil,
+                risk: valid ? service.snapshot.riskiest(now: now)?.risk : nil, failed: !valid)
+            var summary = service.name + " · " + status.condition.token + " · " + status.condition.detail
+            if status.condition.permitsObservation, let quota {
+                summary += " · " + quota.title + " · " + Formats.percent(quota.remaining) + " remaining at " + Formats.date(quota.observedAt)
+            }
+            return (gauge: gauge, summary: summary)
         }
+        let summaries = readings.map(\.summary)
         button.title = ""
-        button.image = StatusBattery.image(gauges, description: summaries.joined(separator: "; "), hud: model.miniHUD)
+        button.image = StatusBattery.image(readings.map(\.gauge), description: summaries.joined(separator: "; "), hud: model.miniHUD)
         button.imagePosition = .imageOnly
         button.toolTip = summaries.joined(separator: "\n")
     }
@@ -1106,6 +1119,26 @@ enum StatusBattery {
             let at = 1920309663.0
             precondition(first[0].limitRisk(now: at) == nil && first[1].limitRisk(now: at) == .critical && first[2].limitRisk(now: at) == nil)
             precondition(stored.riskiest(now: at)?.quota.id == "claude:seven_day" && stored.glance?.id == "claude:seven_day")
+            func accountFixture(_ sessionUsed: Double) -> [Quota] {
+                let limits = [
+                    ClaudeLimit(id: "claude:five_hour", name: "claude", durationMinutes: 300,
+                                used: sessionUsed, resetAt: at + 3600, severity: "normal"),
+                    ClaudeLimit(id: "claude:seven_day", name: "claude", durationMinutes: 10080,
+                                used: 52, resetAt: at + 86400, severity: "normal"),
+                    ClaudeLimit(id: "claude:weekly:fable", name: "Fable", durationMinutes: 10080,
+                                used: 100, resetAt: at + 86400, severity: "critical", active: true)
+                ]
+                return ClaudeUsage.merge(limits, into: Snapshot(), account: "a", now: at)
+            }
+            var service = Snapshot()
+            service.windows = accountFixture(29)
+            precondition(service.glance?.name == "Fable" && service.glance?.remaining == 0)
+            precondition(service.claudeAccountLimits.tightestStarted?.remaining == 48)
+            precondition(service.claudeAccountLimits.riskiest(now: at) == nil)
+            service.windows = accountFixture(100)
+            precondition(service.claudeAccountLimits.tightestStarted?.remaining == 0)
+            service.windows = service.windows.filter { $0.name == "Fable" }
+            precondition(service.claudeAccountLimits.tightestStarted == nil)
             precondition(StatusBattery.label(.init(letter: "G", remaining: 12.4, risk: nil)) == "G12")
             precondition(StatusBattery.label(.init(letter: "C", remaining: nil, risk: nil)) == "CN/A")
             for label in ["G100", "CN/A"] {
